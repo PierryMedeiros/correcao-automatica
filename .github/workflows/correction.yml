@@ -1,6 +1,6 @@
 # .github/workflows/correction.yml
 
-name: Correção Automática de Desafio (v3 - Feedback Detalhado)
+name: Correção Automática de Desafio (v4 - Versão Final Robusta)
 
 on:
   workflow_dispatch:
@@ -28,7 +28,6 @@ jobs:
       
       - name: 4. Instalando dependências (com detecção automática)
         run: |
-          # ... (código de instalação continua o mesmo)
           if [ -f pnpm-lock.yaml ]; then pnpm install;
           elif [ -f yarn.lock ]; then yarn install;
           elif [ -f package-lock.json ]; then npm ci;
@@ -37,65 +36,49 @@ jobs:
       - name: 5. Rodando testes unitários
         run: npm test
       
-      - name: 6. Análise da Estrutura e Código com Gemini
-        id: gemini_analysis
+      - name: 6. Análise e Processamento com Gemini
+        id: gemini_analysis_and_process # O ID continua importante
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
             const { execSync } = require('child_process');
 
-            // 1. Prepara contexto (árvore de pastas e código)
-            try {
-              execSync('sudo apt-get update && sudo apt-get install -y tree');
-            } catch (e) { console.log("Não foi possível instalar o tree."); }
+            // 1. Prepara contexto (o mesmo de antes)
+            try { execSync('sudo apt-get update && sudo apt-get install -y tree'); } catch (e) { console.log("Não foi possível instalar o tree."); }
             const folderStructure = execSync('tree -L 3 || echo "Erro ao gerar árvore de diretórios."').toString();
-            
             let repoPath, interfacePath;
             try {
               repoPath = execSync('find . -type f -name "order.repository.ts"').toString().trim();
               interfacePath = execSync('find . -type f -name "order-repository.interface.ts"').toString().trim();
-            } catch (error) {
-              core.setFailed('Arquivos essenciais (order.repository.ts, etc.) não encontrados.');
-              return;
-            }
-
+            } catch (error) { core.setFailed('Arquivos essenciais (order.repository.ts, etc.) não encontrados.'); return; }
             const repoCode = fs.readFileSync(repoPath, 'utf8');
             const interfaceCode = fs.readFileSync(interfacePath, 'utf8');
             
-            // MUDANÇA 2: Prompt muito mais detalhado para feedback personalizado
+            // 2. Monta o prompt (o mesmo de antes)
             const prompt = `
               Você é um corretor de desafios da Fullcycle, especialista em DDD e TypeScript.
               **Tarefa:** Analise o projeto de um aluno com base nos critérios abaixo e retorne um JSON com sua avaliação.
-
               **Critérios de Análise:**
               1.  **Estrutura de Pastas DDD:** A estrutura de pastas segue boas práticas do DDD (camadas domain, infrastructure, etc.)?
               2.  **Implementação do Repository:** A classe 'OrderRepository' implementa a 'OrderRepositoryInterface' com a lógica para as quatro operações (create, find, findAll, update)?
-
               **Contexto do Projeto:**
               (Estrutura de pastas, código da interface e código do repositório)
-
               **Formato de Saída (JSON Obrigatório):**
               {
                 "analysis": {
-                  "ddd_folder_structure": {
-                    "is_correct": <true_or_false>,
-                    "feedback": "<Explique em uma frase por que a estrutura está correta ou incorreta>"
-                  },
-                  "repository_implementation": {
-                    "is_correct": <true_or_false>,
-                    "feedback": "<Explique em uma frase se a implementação está correta e completa ou o que falta>"
-                  }
+                  "ddd_folder_structure": { "is_correct": <true_or_false>, "feedback": "<Explique...>" },
+                  "repository_implementation": { "is_correct": <true_or_false>, "feedback": "<Explique...>" }
                 },
                 "final_status": "<APROVADO ou REPROVADO>",
-                "overall_feedback": "<Gere um feedback geral para o aluno em markdown, explicando o resultado final com base nas suas análises acima. Seja construtivo.>"
+                "overall_feedback": "<Gere um feedback geral para o aluno em markdown...>"
               }
             `;
             
-            // MUDANÇA 1: Renomeado para GOOGLE_API_KEY
             const apiKey = '${{ secrets.GOOGLE_API_KEY }}';
             const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=' + apiKey;
             
+            // 3. Chama a API do Gemini (o mesmo de antes)
             const response = await fetch(url, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -104,51 +87,37 @@ jobs:
                 "generationConfig": { "responseMimeType": "application/json" }
               })
             });
-
             const data = await response.json();
-            
-            // MUDANÇA 3: Log para depuração. Se falhar de novo, veremos a resposta completa aqui.
-            console.log("RAW API Response:", JSON.stringify(data, null, 2));
-
-            if (!response.ok || !data.candidates) {
-              core.setFailed('Erro ao chamar a API do Gemini. Verifique os logs do passo para a resposta completa.');
-              return;
-            }
+            if (!response.ok || !data.candidates) { core.setFailed('Erro ao chamar a API do Gemini. Resposta: ' + JSON.stringify(data)); return; }
             const jsonText = data.candidates[0].content.parts[0].text;
-            core.setOutput('result', jsonText);
 
-      # MUDANÇA 4: Lógica de decisão e feedback aprimorada
-      - name: 7. Processando resultado da IA
-        id: final_decision
+            // --- ESTA É A MUDANÇA PRINCIPAL ---
+            // 4. Processa o JSON e cria saídas simples
+            const result = JSON.parse(jsonText);
+            const status = result.final_status;
+            const feedback = result.overall_feedback;
+
+            console.log(`Status Decidido pela IA: ${status}`);
+            console.log(`Feedback Gerado: ${feedback}`);
+
+            // 5. Exporta as saídas de forma separada e simples
+            core.setOutput('status', status);
+            core.setOutput('feedback', feedback);
+
+      # --- PASSOS FINAIS MUITO MAIS SIMPLES ---
+      - name: 7. Exibindo Feedback Final
         run: |
-          RESULTADO_IA='${{ steps.gemini_analysis.outputs.result }}'
-          # Checa se o resultado não está vazio
-          if [ -z "$RESULTADO_IA" ]; then
-            echo "ERRO: A resposta da IA está vazia!"
-            echo "STATUS_FINAL=ERRO" >> $GITHUB_ENV
-            echo "FEEDBACK_FINAL='Houve uma falha na comunicação com a IA. Tente novamente.'" >> $GITHUB_ENV
-            exit 0 # Continua para o próximo passo para exibir o erro
-          fi
+          # Pega as saídas simples do passo anterior
+          STATUS='${{ steps.gemini_analysis_and_process.outputs.status }}'
+          FEEDBACK='${{ steps.gemini_analysis_and_process.outputs.feedback }}'
 
-          STATUS=$(echo "$RESULTADO_IA" | jq -r '.final_status')
-          FEEDBACK=$(echo "$RESULTADO_IA" | jq -r '.overall_feedback')
-
-          echo "STATUS_FINAL=$STATUS" >> $GITHUB_ENV
-          # O comando mágico para salvar o feedback de múltiplas linhas em uma variável
-          {
-            echo 'FEEDBACK_FINAL<<EOF'
-            echo "$FEEDBACK"
-            echo 'EOF'
-          } >> $GITHUB_ENV
-          
-      - name: 8. Exibindo Feedback Final
-        run: |
           echo "========================================="
-          echo "O resultado da correção é: ${{ env.STATUS_FINAL }}"
+          echo "O resultado da correção é: $STATUS"
           echo "========================================="
           echo "Feedback da nossa IA:"
-          echo "${{ env.FEEDBACK_FINAL }}"
+          echo "$FEEDBACK"
 
-          if [ "${{ env.STATUS_FINAL }}" != "APROVADO" ]; then
+          # Falha o workflow se o status não for APROVADO
+          if [ "$STATUS" != "APROVADO" ]; then
             exit 1
           fi
