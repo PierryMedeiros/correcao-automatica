@@ -1,6 +1,6 @@
 # .github/workflows/correction.yml
 
-name: Correção Automática de Desafio (Versão Multi-gerenciador)
+name: Correção Automática de Desafio (Multi-gerenciador + IA)
 
 on:
   workflow_dispatch:
@@ -18,41 +18,146 @@ jobs:
         with:
           node-version: '18'
 
-      # PASSO NOVO: Instala o PNPM para que o robô possa usá-lo se necessário
       - name: 2. Configurando PNPM
         uses: pnpm/action-setup@v3
         with:
-          version: 8 # Ou a versão que preferir
+          version: 8
 
       - name: 3. Clonando repositório do aluno
         run: git clone ${{ github.event.inputs.repo_url }} .
       
-      # PASSO MODIFICADO: Agora ele detecta o gerenciador correto
       - name: 4. Instalando dependências (com detecção automática)
         run: |
           if [ -f pnpm-lock.yaml ]; then
-            echo "Arquivo 'pnpm-lock.yaml' encontrado. Usando pnpm."
             pnpm install
           elif [ -f yarn.lock ]; then
-            echo "Arquivo 'yarn.lock' encontrado. Usando yarn."
             yarn install
           elif [ -f package-lock.json ]; then
-            echo "Arquivo 'package-lock.json' encontrado. Usando npm."
-            # 'npm ci' é mais rápido e seguro para automação que 'npm install'
             npm ci
           else
-            echo "Nenhum arquivo de lock encontrado. Usando 'npm install' como padrão."
             npm install
           fi
 
       - name: 5. Rodando testes unitários
-        # Mantemos 'npm test' porque ele lê o script 'test' do package.json,
-        # o que funciona para todos os gerenciadores.
         run: npm test
       
-      - name: 6. Resultado Final
+      # --- NOVOS PASSOS COM GEMINI ---
+      
+      - name: 6. Preparando contexto para a IA (Estrutura de pastas)
+        # O comando 'tree' não vem instalado por padrão, então o instalamos.
         run: |
-          echo "==================================="
-          echo "STATUS: APROVADO"
-          echo "Todos os testes passaram com sucesso."
-          echo "==================================="
+          sudo apt-get update && sudo apt-get install -y tree
+          # Gera a árvore de diretórios e salva em uma variável de ambiente
+          echo "TREE_STRUCTURE=$(tree -L 3)" >> $GITHUB_ENV
+
+      - name: 7. Análise da Estrutura e Código com Gemini
+        id: gemini_analysis
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const { execSync } = require('child_process');
+
+            // 1. Encontrar os arquivos relevantes (de forma mais robusta)
+            let repoPath, interfacePath;
+            try {
+              repoPath = execSync('find . -type f -name "order.repository.ts"').toString().trim();
+              interfacePath = execSync('find . -type f -name "order-repository.interface.ts"').toString().trim();
+            } catch (error) {
+              core.setFailed('Não foi possível encontrar os arquivos order.repository.ts ou order-repository.interface.ts no projeto.');
+              return;
+            }
+
+            const repoCode = fs.readFileSync(repoPath, 'utf8');
+            const interfaceCode = fs.readFileSync(interfacePath, 'utf8');
+            const folderStructure = process.env.TREE_STRUCTURE;
+
+            // 2. Montar o prompt
+            const prompt = `
+              Você é um Sênior Software Engineer especialista em Domain-Driven Design (DDD) e TypeScript, corrigindo o desafio de um aluno.
+
+              **Enunciado do Desafio:** "A classe OrderRepository deve implementar totalmente os métodos definidos pelo OrderRepositoryInterface, e a implementação deve ser coberta por testes."
+
+              **Tarefa:** Analise a estrutura de pastas e o código fornecido. Verifique os dois critérios abaixo e retorne sua análise APENAS no formato JSON.
+
+              **Critérios de Análise:**
+              1.  **Estrutura de Pastas DDD:** A estrutura de pastas segue as boas práticas do DDD (ex: separação em camadas como domain, infrastructure, application)?
+              2.  **Implementação do Repository:** A classe 'OrderRepository' implementa corretamente a 'OrderRepositoryInterface'? Ela contém a lógica para as quatro operações essenciais (criar, buscar um, buscar todos, atualizar)?
+
+              **Contexto do Projeto do Aluno:**
+
+              **Estrutura de Pastas (até 3 níveis):**
+              \`\`\`
+              ${folderStructure}
+              \`\`\`
+
+              **Arquivo 'order-repository.interface.ts':**
+              \`\`\`typescript
+              ${interfaceCode}
+              \`\`\`
+
+              **Arquivo 'order.repository.ts':**
+              \`\`\`typescript
+              ${repoCode}
+              \`\`\`
+
+              **Formato de Saída (JSON Obrigatório):**
+            `;
+
+            // 3. Chamar a API do Gemini
+            const apiKey = '${{ secrets.GOOGLE_API_KEY }}';
+            const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=' + apiKey;
+            
+            const response = await fetch(url, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                contents: [{ parts: [{ text: prompt }] }],
+                "generationConfig": { "responseMimeType": "application/json" }
+              })
+            });
+
+            const data = await response.json();
+            if (!response.ok || !data.candidates) {
+              core.setFailed('Erro ao chamar a API do Gemini. Resposta: ' + JSON.stringify(data));
+              return;
+            }
+            const jsonText = data.candidates[0].content.parts[0].text;
+            core.setOutput('result', jsonText);
+
+      - name: 8. Resultado Final com Base na IA
+        run: |
+          RESULTADO_IA='${{ steps.gemini_analysis.outputs.result }}'
+          
+          # Extrai as conclusões da IA usando 'jq'
+          ESTRUTURA_OK=$(echo $RESULTADO_IA | jq '.analysis.ddd_folder_structure.is_correct')
+          REPO_OK=$(echo $RESULTADO_IA | jq '.analysis.repository_implementation.is_correct')
+          FEEDBACK=$(echo $RESULTADO_IA | jq '.feedback_for_student')
+
+          echo "--- Análise da IA ---"
+          echo "Estrutura de pastas DDD correta? $ESTRUTURA_OK"
+          echo "Implementação do Repository correta? $REPO_OK"
+          echo "---------------------"
+          
+          # Lógica de Decisão Final
+          if [ "$ESTRUTURA_OK" = "true" ] && [ "$REPO_OK" = "true" ]; then
+            echo "STATUS_FINAL=APROVADO" >> $GITHUB_ENV
+          else
+            echo "STATUS_FINAL=REPROVADO" >> $GITHUB_ENV
+          fi
+
+      - name: 9. Exibindo Feedback Final
+        run: |
+          RESULTADO_IA='${{ steps.gemini_analysis.outputs.result }}'
+          FEEDBACK=$(echo $RESULTADO_IA | jq '.feedback_for_student')
+
+          echo "========================================="
+          echo "O resultado da correção é: ${{ env.STATUS_FINAL }}"
+          echo "========================================="
+          echo "Feedback da nossa IA:"
+          echo $FEEDBACK # 'jq' já formata como uma string limpa
+
+          # Se o projeto foi reprovado, falha o workflow para o ícone ficar vermelho
+          if [ "${{ env.STATUS_FINAL }}" = "REPROVADO" ]; then
+            exit 1
+          fi
