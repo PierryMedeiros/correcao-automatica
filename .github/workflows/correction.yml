@@ -1,34 +1,37 @@
 # .github/workflows/correction.yml
-name: Correção Automática de Desafio
+
+name: Correção Automática de Desafio (Versão Simplificada)
 
 on:
   workflow_dispatch:
     inputs:
       repo_url:
-        description: 'URL do repositório do aluno para corrigir'
+        description: 'URL para clonagem (ex: https://.../repo.git)'
         required: true
 
 jobs:
   correction-pipeline:
     runs-on: ubuntu-latest
     steps:
-      # Este passo prepara a máquina virtual com Node.js
-      - name: 1. Configurando o ambiente com Node.js
+      - name: 1. Configurando ambiente Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '18'
 
-      # AGORA A MÁGICA ACONTECE:
-      # O robô clona o código DO ALUNO para dentro da máquina virtual.
-      # É SÓ A PARTIR DAQUI que a pasta 'src' e o 'package.json' do ALUNO existem.
-      - name: 2. Clonando o repositório do aluno
+      - name: 2. Clonando repositório do aluno
         run: git clone ${{ github.event.inputs.repo_url }} .
       
-      # Os próximos comandos rodam DENTRO do código do aluno que foi clonado.
       - name: 3. Instalando dependências
         run: npm install
 
-      - name: 4. Rodando os testes unitários
+      - name: 4. Rodando testes unitários
         run: npm test
       
-      # ... (resto do arquivo com a análise do Gemini, como no exemplo anterior) ...
+      # Se todos os passos acima funcionarem, este passo será executado.
+      # Se algum falhar, o workflow para antes de chegar aqui.
+      - name: 5. Resultado Final
+        run: |
+          echo "==================================="
+          echo "STATUS: APROVADO"
+          echo "Todos os testes passaram com sucesso."
+          echo "==================================="
