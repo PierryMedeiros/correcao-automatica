@@ -29,23 +29,14 @@ jobs:
       - name: 4. Feedback para Falha na Clonagem
         if: steps.clone_repo.outcome == 'failure'
         run: |
-          echo "========================================="
           echo "STATUS: REPROVADO (Erro no Repositório)"
-          echo "========================================="
-          echo "Feedback para o Aluno:"
-          echo "Olá! Esperamos que esteja tudo bem."
-          echo "Não conseguimos acessar o seu repositório. Isso geralmente acontece por um destes motivos:"
-          echo "1. O link enviado está incorreto ou incompleto."
-          echo "2. O seu repositório está configurado como 'Privado'."
-          echo "Por gentileza, verifique se o link está correto e se o repositório está como 'Público'."
-          echo "Após fazer o ajuste, envie o desafio novamente para correção."
+          echo "Feedback: Olá! Não conseguimos acessar o seu repositório. Verifique se o link está correto e se o repositório está como 'Público' e tente novamente."
           exit 1
       - name: 5. Encontrando o diretório principal do projeto
         if: steps.clone_repo.outcome == 'success'
         id: find_project_dir
         run: |
           PROJECT_PATH=$(dirname $(find . -name "package.json" -print -quit))
-          echo "Projeto encontrado no diretório: $PROJECT_PATH"
           echo "path=$PROJECT_PATH" >> $GITHUB_OUTPUT
       - name: 6. Instalando dependências
         if: steps.clone_repo.outcome == 'success'
@@ -64,21 +55,15 @@ jobs:
       - name: 8. Feedback para Testes Falhos
         if: steps.clone_repo.outcome == 'success' && steps.run_tests.outcome == 'failure'
         run: |
-          echo "========================================="
           echo "STATUS: REPROVADO (Falha nos Testes)"
-          echo "========================================="
-          echo "Feedback para o Aluno:"
-          echo "Olá! Recebemos seu desafio."
-          echo "Após executar o comando para rodar os testes, identificamos que um ou mais testes falharam."
-          echo "Lembre-se que, conforme o enunciado, todos os testes devem passar para que o desafio seja aprovado."
-          echo "Por favor, revise a saída dos testes, faça os ajustes necessários e envie o projeto novamente."
-          echo "Bom trabalho e continue assim!"
+          echo "Feedback: Olá! Identificamos que um ou mais testes falharam. Lembre-se que todos os testes devem passar para o desafio ser aprovado. Revise a saída dos testes no log acima e envie novamente."
           exit 1
       
-      # --- AQUI ESTÃO AS ÚNICAS MUDANÇAS ---
-      - name: 9. Análise Personalizada com Gemini
+      # --- NOVA ABORDAGEM HÍBRIDA ---
+
+      - name: 9. Verificação da Declaração 'implements' com IA
         if: steps.clone_repo.outcome == 'success' && steps.run_tests.outcome == 'success'
-        id: gemini_analysis_and_process
+        id: ai_check
         uses: actions/github-script@v7
         env:
           PROJECT_PATH: ${{ steps.find_project_dir.outputs.path }}
@@ -88,81 +73,63 @@ jobs:
             const { execSync } = require('child_process');
             const projectDir = process.env.PROJECT_PATH;
             process.chdir(projectDir);
-            
-            try { execSync('sudo apt-get update && sudo apt-get install -y tree'); } catch (e) { console.log("Não foi possível instalar o tree."); }
-            const folderStructure = execSync('tree -L 3 || echo "Erro ao gerar árvore."').toString();
-            let repoPath, interfacePath, testPath;
+
+            let repoPath;
             try {
               repoPath = execSync('find . -type f -name "*repository.ts" ! -name "*.interface.ts" ! -name "*.spec.ts" ! -name "*.test.ts"').toString().trim().split('\n')[0];
-              interfacePath = execSync('find . -type f -name "*repository.interface.ts"').toString().trim().split('\n')[0];
-              testPath = execSync('find . -type f \\( -name "*repository.spec.ts" -o -name "*repository.test.ts" \\)').toString().trim().split('\n')[0];
-            } catch (error) { core.setFailed('Arquivos essenciais (repositório, interface ou teste) não encontrados.'); return; }
+            } catch (error) { core.setFailed('Arquivo do repositório não encontrado.'); return; }
             const repoCode = fs.readFileSync(repoPath, 'utf8');
-            const interfaceCode = fs.readFileSync(interfacePath, 'utf8');
-            const testCode = fs.readFileSync(testPath, 'utf8');
             
-            // MUDANÇA 1: Prompt muito mais rigoroso
             const prompt = `
-              Você é um corretor de desafios automatizado, agindo como um revisor de código sênior extremamente rigoroso e literal.
-              **Tarefa:** Sua tarefa é seguir o checklist de avaliação passo a passo, sem fazer suposições. A completude é o critério mais importante.
-
-              **Checklist de Avaliação (Siga estritamente):**
-              1.  **Análise da Interface:** Leia o código da Interface e liste em um array de strings todos os nomes dos métodos que ela define.
-              2.  **Análise da Classe:** Leia o código da Classe do Repositório e liste em um array de strings todos os nomes dos métodos públicos que ela implementa.
-              3.  **Análise Comparativa:** Compare as duas listas. A classe implementa TODOS os métodos da interface? Responda 'true' ou 'false'.
-              4.  **Análise de Testes:** Analise o código de teste. Para cada método implementado na classe, existe um teste correspondente? Responda 'true' ou 'false'.
-              5.  **Análise de Estrutura:** A estrutura de pastas separa as camadas 'domain' e 'infrastructure'? Responda 'true' ou 'false'.
-
-              **Contexto do Projeto do Aluno:**
-              (Aqui entrarão a estrutura de pastas e o conteúdo dos arquivos do aluno)
-              
-              **Formato de Saída (JSON Obrigatório):**
-              Preencha o JSON abaixo com base na sua análise literal.
+              Você é um analisador de código TypeScript. Sua única tarefa é verificar se a declaração da classe no código fornecido contém a palavra-chave 'implements'.
+              Responda APENAS com o seguinte JSON:
               {
-                "evaluation": {
-                  "interface_methods": ["<lista de métodos da interface>"],
-                  "class_methods": ["<lista de métodos da classe>"],
-                  "is_implementation_complete": <true_or_false>,
-                  "are_all_methods_tested": <true_or_false>,
-                  "is_structure_correct": <true_or_false>
-                },
-                "final_decision": {
-                  "status": "<APROVADO ou REPROVADO>",
-                  "justification": "<Justifique sua decisão. Se for 'REPROVADO', explique exatamente o que faltou com base no checklist acima (ex: 'A implementação está incompleta. Faltam os métodos X e Y definidos na interface.').>"
-                }
+                "implements_keyword_found": <true_or_false>
               }
+              
+              Código para análise:
+              \`\`\`typescript
+              ${repoCode}
+              \`\`\`
             `;
             
-            // MUDANÇA 2: Usando o modelo gemini-2.5-flash
             const apiKey = '${{ secrets.GOOGLE_API_KEY }}';
             const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + apiKey;
             
-            const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ parts: [{ text: prompt.replace("(Aqui entrarão a estrutura de pastas e o conteúdo dos arquivos do aluno)", `\n**Estrutura de Pastas:**\n\`\`\`\n${folderStructure}\`\`\`\n**Interface:**\n\`\`\`typescript\n${interfaceCode}\`\`\`\n**Repositório:**\n\`\`\`typescript\n${repoCode}\`\`\`\n**Testes:**\n\`\`\`typescript\n${testCode}\`\`\``) }] }], "generationConfig": { "responseMimeType": "application/json" } }) });
+            const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], "generationConfig": { "responseMimeType": "application/json" } }) });
             const data = await response.json();
-            if (!response.ok || !data.candidates) { core.setFailed('Erro ao chamar a API do Gemini. Resposta: ' + JSON.stringify(data)); return; }
+            if (!response.ok || !data.candidates) { core.setFailed('Erro ao chamar a API do Gemini: ' + JSON.stringify(data)); return; }
             const jsonText = data.candidates[0].content.parts[0].text;
             const result = JSON.parse(jsonText);
-            
-            // MUDANÇA 3: Dupla checagem de segurança
-            const eval = result.evaluation;
-            if (result.final_decision.status === 'APROVADO' && (!eval.is_implementation_complete || !eval.are_all_methods_tested)) {
-              core.setOutput('status', 'REPROVADO');
-              core.setOutput('feedback', 'REVISÃO MANUAL SUGERIDA: A IA aprovou o projeto, mas a análise detalhada indica que requisitos de implementação ou testes não foram cumpridos.');
-            } else {
-              core.setOutput('status', result.final_decision.status);
-              core.setOutput('feedback', result.final_decision.justification);
-            }
 
-      - name: 10. Exibindo Feedback Final Personalizado
+            core.setOutput('implements_found', result.implements_keyword_found);
+
+      - name: 10. Verificação da Implementação com TypeScript Compiler (TSC)
+        if: steps.clone_repo.outcome == 'success' && steps.run_tests.outcome == 'success'
+        id: tsc_check
+        working-directory: ${{ steps.find_project_dir.outputs.path }}
+        continue-on-error: true
+        run: npx tsc --noEmit
+
+      - name: 11. Feedback Final e Decisão
         if: steps.clone_repo.outcome == 'success' && steps.run_tests.outcome == 'success'
         run: |
-          STATUS='${{ steps.gemini_analysis_and_process.outputs.status }}'
-          FEEDBACK='${{ steps.gemini_analysis_and_process.outputs.feedback }}'
-          echo "========================================="
-          echo "O resultado da correção é: $STATUS"
-          echo "========================================="
-          echo "Feedback da nossa IA:"
-          echo "$FEEDBACK"
-          if [ "$STATUS" != "APROVADO" ]; then
+          IMPLEMENTS_FOUND=${{ steps.ai_check.outputs.implements_found }}
+          TSC_OUTCOME=${{ steps.tsc_check.outcome }}
+
+          if [ "$IMPLEMENTS_FOUND" != "true" ]; then
+            echo "STATUS: REPROVADO"
+            echo "Feedback: A classe do seu repositório não está declarando a implementação da interface com a palavra-chave 'implements'. Este é um requisito fundamental do desafio."
             exit 1
+          elif [ "$TSC_OUTCOME" = "failure" ]; then
+            echo "STATUS: REPROVADO"
+            echo "Feedback: A sua classe declara 'implements', mas a implementação está incompleta ou incorreta. Um ou mais métodos da interface estão faltando ou possuem uma assinatura diferente. Revise os erros do compilador no log do passo anterior."
+            exit 1
+          else
+            echo "STATUS: APROVADO"
+            echo "Feedback: Parabéns! O projeto foi aprovado. A classe implementa corretamente a interface e todos os testes passaram com sucesso."
           fi
+
+      - name: 12. Exibindo Resultado Final
+        if: always() # Este passo sempre roda para exibir o resultado
+        run: echo "Finalizou." # Este passo é opcional, apenas para visualização
