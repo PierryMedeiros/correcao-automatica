@@ -1,6 +1,6 @@
 # .github/workflows/correction.yml
 
-name: Correção Automática de Desafio (v5)
+name: Correção Automática de Desafio (v6.1 - Validação Final)
 
 on:
   workflow_dispatch:
@@ -26,44 +26,48 @@ jobs:
       - name: 3. Clonando repositório do aluno
         run: git clone ${{ github.event.inputs.repo_url }} .
       
-      - name: 4. Instalando dependências
+      - name: 4. Encontrando o diretório principal do projeto
+        id: find_project_dir
+        run: |
+          PROJECT_PATH=$(dirname $(find . -name "package.json" -print -quit))
+          echo "Projeto encontrado no diretório: $PROJECT_PATH"
+          echo "path=$PROJECT_PATH" >> $GITHUB_OUTPUT
+
+      - name: 5. Instalando dependências
+        working-directory: ${{ steps.find_project_dir.outputs.path }}
         run: |
           if [ -f pnpm-lock.yaml ]; then pnpm install;
           elif [ -f yarn.lock ]; then yarn install;
           elif [ -f package-lock.json ]; then npm ci;
           else npm install; fi
 
-      - name: 5. Rodando testes unitários
+      - name: 6. Rodando testes unitários
+        working-directory: ${{ steps.find_project_dir.outputs.path }}
         run: npm test
       
-      - name: 6. Análise Personalizada com Gemini
+      - name: 7. Análise Personalizada com Gemini
         id: gemini_analysis_and_process
         uses: actions/github-script@v7
+        working-directory: ${{ steps.find_project_dir.outputs.path }}
         with:
           script: |
             const fs = require('fs');
             const { execSync } = require('child_process');
 
-            // 1. Prepara contexto (árvore, código e agora os testes)
             try { execSync('sudo apt-get update && sudo apt-get install -y tree'); } catch (e) { console.log("Não foi possível instalar o tree."); }
             const folderStructure = execSync('tree -L 3 || echo "Erro ao gerar árvore."').toString();
             
             let repoPath, interfacePath, testPath;
             try {
-              // Comandos 'find' aprimorados para serem mais flexíveis
               repoPath = execSync('find . -type f -name "*repository.ts" ! -name "*.interface.ts" ! -name "*.spec.ts" ! -name "*.test.ts"').toString().trim().split('\n')[0];
               interfacePath = execSync('find . -type f -name "*repository.interface.ts"').toString().trim().split('\n')[0];
               testPath = execSync('find . -type f \\( -name "*repository.spec.ts" -o -name "*repository.test.ts" \\)').toString().trim().split('\n')[0];
-            } catch (error) {
-              core.setFailed('Arquivos essenciais (repositório, interface ou teste) não encontrados.');
-              return;
-            }
+            } catch (error) { core.setFailed('Arquivos essenciais (repositório, interface ou teste) não encontrados.'); return; }
 
             const repoCode = fs.readFileSync(repoPath, 'utf8');
             const interfaceCode = fs.readFileSync(interfacePath, 'utf8');
             const testCode = fs.readFileSync(testPath, 'utf8');
             
-            // 2. Monta o NOVO PROMPT PERSONALIZADO
             const prompt = `
               Você é um Sênior Software Engineer e instrutor na Fullcycle, especialista em DDD e TypeScript. Sua tarefa é avaliar o desafio de um aluno, seguindo a mesma lógica de um corretor humano experiente, que é flexível com nomes mas rigoroso com conceitos.
               **REGRAS DE CORREÇÃO:**
@@ -79,56 +83,28 @@ jobs:
               **Contexto do Projeto do Aluno:**
               (Aqui entrarão a estrutura de pastas e o conteúdo dos arquivos do aluno)
               **Formato de Saída (JSON Obrigatório):**
-              Com base na sua análise, preencha o JSON abaixo.
-              {
-                "analysis_details": {
-                  "folder_structure": { "is_correct": <true_or_false>, "feedback": "<Seu feedback sobre a estrutura de pastas>" },
-                  "repository_implementation": { "is_correct": <true_or_false>, "feedback": "<Seu feedback sobre a implementação da classe e da interface>" },
-                  "test_coverage": { "is_correct": <true_or_false>, "feedback": "<Seu feedback sobre a existência dos testes para as 4 operações>" }
-                },
-                "final_decision": {
-                  "status": "<APROVADO, APROVADO_COM_RESSALVAS, ou REPROVADO>",
-                  "justification": "<Um parágrafo de feedback final para o aluno, justificando o status com base nos pontos que você analisou. Seja construtivo e claro.>"
-                }
-              }
+              { "analysis_details": { "folder_structure": { "is_correct": <true_or_false>, "feedback": "<Seu feedback>" }, "repository_implementation": { "is_correct": <true_or_false>, "feedback": "<Seu feedback>" }, "test_coverage": { "is_correct": <true_or_false>, "feedback": "<Seu feedback>" } }, "final_decision": { "status": "<APROVADO, APROVADO_COM_RESSALVAS, ou REPROVADO>", "justification": "<Seu feedback final>" } }
             `;
             
             const apiKey = '${{ secrets.GOOGLE_API_KEY }}';
             const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=' + apiKey;
-            
-            // 3. Chama a API do Gemini
-            const response = await fetch(url, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                contents: [{ parts: [{ text: prompt.replace("(Aqui entrarão a estrutura de pastas e o conteúdo dos arquivos do aluno)", `\n**Estrutura de Pastas:**\n\`\`\`\n${folderStructure}\`\`\`\n**Interface:**\n\`\`\`typescript\n${interfaceCode}\`\`\`\n**Repositório:**\n\`\`\`typescript\n${repoCode}\`\`\`\n**Testes:**\n\`\`\`typescript\n${testCode}\`\`\``) }] }],
-                "generationConfig": { "responseMimeType": "application/json" }
-              })
-            });
+            const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ parts: [{ text: prompt.replace("(Aqui entrarão a estrutura de pastas e o conteúdo dos arquivos do aluno)", `\n**Estrutura de Pastas:**\n\`\`\`\n${folderStructure}\`\`\`\n**Interface:**\n\`\`\`typescript\n${interfaceCode}\`\`\`\n**Repositório:**\n\`\`\`typescript\n${repoCode}\`\`\`\n**Testes:**\n\`\`\`typescript\n${testCode}\`\`\``) }] }], "generationConfig": { "responseMimeType": "application/json" } }) });
             const data = await response.json();
             if (!response.ok || !data.candidates) { core.setFailed('Erro ao chamar a API do Gemini. Resposta: ' + JSON.stringify(data)); return; }
             const jsonText = data.candidates[0].content.parts[0].text;
-
-            // 4. Processa o JSON e cria saídas com base na nova estrutura
             const result = JSON.parse(jsonText);
-            const status = result.final_decision.status;
-            const feedback = result.final_decision.justification;
+            core.setOutput('status', result.final_decision.status);
+            core.setOutput('feedback', result.final_decision.justification);
 
-            core.setOutput('status', status);
-            core.setOutput('feedback', feedback);
-
-      - name: 7. Exibindo Feedback Final Personalizado
+      - name: 8. Exibindo Feedback Final Personalizado
         run: |
           STATUS='${{ steps.gemini_analysis_and_process.outputs.status }}'
           FEEDBACK='${{ steps.gemini_analysis_and_process.outputs.feedback }}'
-
           echo "========================================="
           echo "O resultado da correção é: $STATUS"
           echo "========================================="
           echo "Feedback da nossa IA:"
           echo "$FEEDBACK"
-
-          # Falha o workflow se o status for REPROVADO para o ícone ficar vermelho
           if [ "$STATUS" = "REPROVADO" ]; then
             exit 1
           fi
