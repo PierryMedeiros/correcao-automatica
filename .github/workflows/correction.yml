@@ -1,6 +1,6 @@
 # .github/workflows/correction.yml
 
-name: Correção Automática de Desafio (Versão Simplificada)
+name: Correção Automática de Desafio (Versão Multi-gerenciador)
 
 on:
   workflow_dispatch:
@@ -18,18 +18,39 @@ jobs:
         with:
           node-version: '18'
 
-      - name: 2. Clonando repositório do aluno
+      # PASSO NOVO: Instala o PNPM para que o robô possa usá-lo se necessário
+      - name: 2. Configurando PNPM
+        uses: pnpm/action-setup@v3
+        with:
+          version: 8 # Ou a versão que preferir
+
+      - name: 3. Clonando repositório do aluno
         run: git clone ${{ github.event.inputs.repo_url }} .
       
-      - name: 3. Instalando dependências
-        run: npm install
+      # PASSO MODIFICADO: Agora ele detecta o gerenciador correto
+      - name: 4. Instalando dependências (com detecção automática)
+        run: |
+          if [ -f pnpm-lock.yaml ]; then
+            echo "Arquivo 'pnpm-lock.yaml' encontrado. Usando pnpm."
+            pnpm install
+          elif [ -f yarn.lock ]; then
+            echo "Arquivo 'yarn.lock' encontrado. Usando yarn."
+            yarn install
+          elif [ -f package-lock.json ]; then
+            echo "Arquivo 'package-lock.json' encontrado. Usando npm."
+            # 'npm ci' é mais rápido e seguro para automação que 'npm install'
+            npm ci
+          else
+            echo "Nenhum arquivo de lock encontrado. Usando 'npm install' como padrão."
+            npm install
+          fi
 
-      - name: 4. Rodando testes unitários
+      - name: 5. Rodando testes unitários
+        # Mantemos 'npm test' porque ele lê o script 'test' do package.json,
+        # o que funciona para todos os gerenciadores.
         run: npm test
       
-      # Se todos os passos acima funcionarem, este passo será executado.
-      # Se algum falhar, o workflow para antes de chegar aqui.
-      - name: 5. Resultado Final
+      - name: 6. Resultado Final
         run: |
           echo "==================================="
           echo "STATUS: APROVADO"
