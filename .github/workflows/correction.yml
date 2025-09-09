@@ -13,7 +13,7 @@ jobs:
   correction-pipeline:
     runs-on: ubuntu-latest
     steps:
-      # Passos 1 a 8 permanecem exatamente como no seu arquivo funcional
+      # Passos 1 a 8 (preparação e tratamento de erros) permanecem os mesmos
       - name: 1. Configurando ambiente Node.js
         uses: actions/setup-node@v4
         with:
@@ -59,11 +59,10 @@ jobs:
           echo "Feedback: Olá! Identificamos que um ou mais testes falharam. Lembre-se que todos os testes devem passar para o desafio ser aprovado. Revise a saída dos testes no log acima e envie novamente."
           exit 1
       
-      # --- NOVA ABORDAGEM HÍBRIDA ---
-
-      - name: 9. Verificação da Declaração 'implements' com IA
+      # --- PASSO DE ANÁLISE TOTALMENTE REESCRITO ---
+      - name: 9. Verificando Métodos do Repositório com IA
         if: steps.clone_repo.outcome == 'success' && steps.run_tests.outcome == 'success'
-        id: ai_check
+        id: gemini_analysis_and_process
         uses: actions/github-script@v7
         env:
           PROJECT_PATH: ${{ steps.find_project_dir.outputs.path }}
@@ -81,16 +80,31 @@ jobs:
             const repoCode = fs.readFileSync(repoPath, 'utf8');
             
             const prompt = `
-              Você é um analisador de código TypeScript. Sua única tarefa é verificar se a declaração da classe no código fornecido contém a palavra-chave 'implements'.
-              Responda APENAS com o seguinte JSON:
-              {
-                "implements_keyword_found": <true_or_false>
-              }
-              
-              Código para análise:
+              Você é um assistente de análise de código focado em encontrar métodos específicos.
+              Sua única tarefa é ler o código TypeScript de uma classe e verificar se ela contém métodos que realizam quatro operações específicas, sendo flexível com os nomes.
+
+              **Operações a serem encontradas:**
+              - Uma operação para **criar** um novo registro (ex: 'create').
+              - Uma operação para **buscar um** registro (ex: 'find', 'findById').
+              - Uma operação para **buscar todos** os registros (ex: 'findAll', 'getAll').
+              - Uma operação para **atualizar** um registro (ex: 'update').
+
+              Responda APENAS com o seguinte JSON, preenchendo 'true' ou 'false' para cada operação encontrada.
+
+              **Código para Análise:**
               \`\`\`typescript
               ${repoCode}
               \`\`\`
+
+              **Formato de Saída (JSON Obrigatório):**
+              {
+                "methods_found": {
+                  "create": <true_or_false>,
+                  "find_one": <true_or_false>,
+                  "find_all": <true_or_false>,
+                  "update": <true_or_false>
+                }
+              }
             `;
             
             const apiKey = '${{ secrets.GOOGLE_API_KEY }}';
@@ -102,34 +116,37 @@ jobs:
             const jsonText = data.candidates[0].content.parts[0].text;
             const result = JSON.parse(jsonText);
 
-            core.setOutput('implements_found', result.implements_keyword_found);
+            // --- NOSSO SCRIPT É O JUIZ FINAL ---
+            const checks = result.methods_found;
+            const allMethodsFound = checks.create && checks.find_one && checks.find_all && checks.update;
+            
+            let status = 'APROVADO';
+            let feedback = 'Parabéns! O projeto foi aprovado. Todos os testes passaram e a análise do código confirmou a presença de todas as operações necessárias no repositório.';
 
-      - name: 10. Verificação da Implementação com TypeScript Compiler (TSC)
-        if: steps.clone_repo.outcome == 'success' && steps.run_tests.outcome == 'success'
-        id: tsc_check
-        working-directory: ${{ steps.find_project_dir.outputs.path }}
-        continue-on-error: true
-        run: npx tsc --noEmit
+            if (!allMethodsFound) {
+              status = 'REPROVADO';
+              const missing = [];
+              if (!checks.create) missing.push('criar');
+              if (!checks.find_one) missing.push('buscar um');
+              if (!checks.find_all) missing.push('buscar todos');
+              if (!checks.update) missing.push('atualizar');
+              feedback = `O projeto foi reprovado. Embora os testes tenham passado, a análise do código indica que seu repositório está incompleto. Faltam métodos para as seguintes operações: **${missing.join(', ')}**. Por favor, adicione a lógica faltante e envie novamente.`;
+            }
 
-      - name: 11. Feedback Final e Decisão
+            core.setOutput('status', status);
+            core.setOutput('feedback', feedback);
+
+      - name: 10. Exibindo Feedback Final
         if: steps.clone_repo.outcome == 'success' && steps.run_tests.outcome == 'success'
+        env:
+          STATUS: ${{ steps.gemini_analysis_and_process.outputs.status }}
+          FEEDBACK: ${{ steps.gemini_analysis_and_process.outputs.feedback }}
         run: |
-          IMPLEMENTS_FOUND=${{ steps.ai_check.outputs.implements_found }}
-          TSC_OUTCOME=${{ steps.tsc_check.outcome }}
-
-          if [ "$IMPLEMENTS_FOUND" != "true" ]; then
-            echo "STATUS: REPROVADO"
-            echo "Feedback: A classe do seu repositório não está declarando a implementação da interface com a palavra-chave 'implements'. Este é um requisito fundamental do desafio."
+          echo "========================================="
+          echo "O resultado da correção é: $STATUS"
+          echo "========================================="
+          echo "Feedback Final:"
+          echo "$FEEDBACK"
+          if [ "$STATUS" != "APROVADO" ]; then
             exit 1
-          elif [ "$TSC_OUTCOME" = "failure" ]; then
-            echo "STATUS: REPROVADO"
-            echo "Feedback: A sua classe declara 'implements', mas a implementação está incompleta ou incorreta. Um ou mais métodos da interface estão faltando ou possuem uma assinatura diferente. Revise os erros do compilador no log do passo anterior."
-            exit 1
-          else
-            echo "STATUS: APROVADO"
-            echo "Feedback: Parabéns! O projeto foi aprovado. A classe implementa corretamente a interface e todos os testes passaram com sucesso."
           fi
-
-      - name: 12. Exibindo Resultado Final
-        if: always() # Este passo sempre roda para exibir o resultado
-        run: echo "Finalizou." # Este passo é opcional, apenas para visualização
