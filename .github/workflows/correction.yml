@@ -1,6 +1,6 @@
 # .github/workflows/correction.yml
 
-name: Correção Automática de Desafio (v6.1 - Validação Final)
+name: Correção Automática de Desafio
 
 on:
   workflow_dispatch:
@@ -53,7 +53,6 @@ jobs:
           script: |
             const fs = require('fs');
             const { execSync } = require('child_process');
-
             try { execSync('sudo apt-get update && sudo apt-get install -y tree'); } catch (e) { console.log("Não foi possível instalar o tree."); }
             const folderStructure = execSync('tree -L 3 || echo "Erro ao gerar árvore."').toString();
             
