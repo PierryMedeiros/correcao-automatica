@@ -23,17 +23,45 @@ jobs:
         with:
           version: 8
 
+      # MUDANÇA 1: Adicionado 'id' e 'continue-on-error'
       - name: 3. Clonando repositório do aluno
+        id: clone_repo
+        continue-on-error: true # Não para o workflow se a clonagem falhar
         run: git clone ${{ github.event.inputs.repo_url }} .
       
-      - name: 4. Encontrando o diretório principal do projeto
+      # PASSO NOVO: Só roda se o passo 'clone_repo' falhar
+      - name: 4. Feedback para Falha na Clonagem
+        if: steps.clone_repo.outcome == 'failure'
+        run: |
+          echo "========================================="
+          echo "STATUS: REPROVADO (Erro no Repositório)"
+          echo "========================================="
+          echo "Feedback para o Aluno:"
+          echo ""
+          echo "Olá! Esperamos que esteja tudo bem."
+          echo ""
+          echo "Não conseguimos acessar o seu repositório. Isso geralmente acontece por um destes motivos:"
+          echo "1. O link enviado está incorreto ou incompleto."
+          echo "2. O seu repositório está configurado como 'Privado'."
+          echo ""
+          echo "Por gentileza, verifique se o link está correto e se o repositório está como 'Público'."
+          echo ""
+          echo "Após fazer o ajuste, envie o desafio novamente para correção."
+          
+          # Encerra o workflow com status de falha
+          exit 1
+      
+      # MUDANÇA 2: Os passos seguintes agora dependem do sucesso da clonagem
+      - name: 5. Encontrando o diretório principal do projeto
+        if: steps.clone_repo.outcome == 'success'
         id: find_project_dir
         run: |
           PROJECT_PATH=$(dirname $(find . -name "package.json" -print -quit))
           echo "Projeto encontrado no diretório: $PROJECT_PATH"
           echo "path=$PROJECT_PATH" >> $GITHUB_OUTPUT
 
-      - name: 5. Instalando dependências
+      - name: 6. Instalando dependências
+        if: steps.clone_repo.outcome == 'success'
         working-directory: ${{ steps.find_project_dir.outputs.path }}
         run: |
           if [ -f pnpm-lock.yaml ]; then pnpm install;
@@ -41,16 +69,15 @@ jobs:
           elif [ -f package-lock.json ]; then npm ci;
           else npm install; fi
 
-      # MUDANÇA 1: Adicionamos um ID e a propriedade 'continue-on-error'
-      - name: 6. Rodando testes unitários
+      - name: 7. Rodando testes unitários
+        if: steps.clone_repo.outcome == 'success'
         id: run_tests
         working-directory: ${{ steps.find_project_dir.outputs.path }}
-        continue-on-error: true # Permite que o workflow continue mesmo se os testes falharem
+        continue-on-error: true
         run: npm test
       
-      # PASSO NOVO: Este passo só executa se o passo anterior ('run_tests') falhar
-      - name: 7. Feedback para Testes Falhos
-        if: steps.run_tests.outcome == 'failure'
+      - name: 8. Feedback para Testes Falhos
+        if: steps.clone_repo.outcome == 'success' && steps.run_tests.outcome == 'failure'
         run: |
           echo "========================================="
           echo "STATUS: REPROVADO (Falha nos Testes)"
@@ -62,23 +89,20 @@ jobs:
           echo "Após executar o comando para rodar os testes, identificamos que um ou mais testes falharam."
           echo "Lembre-se que, conforme o enunciado, todos os testes devem passar para que o desafio seja aprovado."
           echo ""
-          echo "Por favor, revise a saída dos testes no log acima, faça os ajustes necessários e envie o projeto novamente."
+          echo "Por favor, revise a saída dos testes, faça os ajustes necessários e envie o projeto novamente."
           echo ""
           echo "Bom trabalho e continue assim!"
-          
-          # Encerra o workflow com status de falha
           exit 1
       
-      # MUDANÇA 2: Os passos seguintes agora só rodam se os testes passarem
-      - name: 8. Análise Personalizada com Gemini
-        if: steps.run_tests.outcome == 'success'
+      - name: 9. Análise Personalizada com Gemini
+        if: steps.clone_repo.outcome == 'success' && steps.run_tests.outcome == 'success'
         id: gemini_analysis_and_process
         uses: actions/github-script@v7
         env:
           PROJECT_PATH: ${{ steps.find_project_dir.outputs.path }}
         with:
           script: |
-            // O script da IA continua exatamente o mesmo
+            // O script da IA continua o mesmo
             const fs = require('fs');
             const { execSync } = require('child_process');
             const projectDir = process.env.PROJECT_PATH;
@@ -121,8 +145,8 @@ jobs:
             core.setOutput('status', result.final_decision.status);
             core.setOutput('feedback', result.final_decision.justification);
 
-      - name: 9. Exibindo Feedback Final Personalizado
-        if: steps.run_tests.outcome == 'success'
+      - name: 10. Exibindo Feedback Final Personalizado
+        if: steps.clone_repo.outcome == 'success' && steps.run_tests.outcome == 'success'
         run: |
           STATUS='${{ steps.gemini_analysis_and_process.outputs.status }}'
           FEEDBACK='${{ steps.gemini_analysis_and_process.outputs.feedback }}'
