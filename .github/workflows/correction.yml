@@ -13,7 +13,7 @@ jobs:
   correction-pipeline:
     runs-on: ubuntu-latest
     steps:
-      # Passos 1 a 8 permanecem os mesmos
+      # Passos 1 a 8 permanecem exatamente como no seu arquivo funcional
       - name: 1. Configurando ambiente Node.js
         uses: actions/setup-node@v4
         with:
@@ -59,69 +59,113 @@ jobs:
           echo "Feedback: Olá! Identificamos que um ou mais testes falharam. Lembre-se que todos os testes devem passar para o desafio ser aprovado. Revise a saída dos testes no log acima e envie novamente."
           exit 1
       
-      # --- ABORDAGEM DETERMINÍSTICA E INFALÍVEL ---
-      
-      - name: 9. Criando arquivo de verificação de interface
+      # --- PASSO 9 TOTALMENTE REESCRITO PARA IMITAR O RACIOCÍNIO DO CLI ---
+      - name: 9. Análise de Implementação com Contexto Completo
         if: steps.clone_repo.outcome == 'success' && steps.run_tests.outcome == 'success'
+        id: gemini_analysis_and_process
         uses: actions/github-script@v7
-        id: create_test_file
         env:
           PROJECT_PATH: ${{ steps.find_project_dir.outputs.path }}
         with:
           script: |
             const fs = require('fs');
-            const path = require('path');
             const { execSync } = require('child_process');
             const projectDir = process.env.PROJECT_PATH;
             process.chdir(projectDir);
 
-            let repoPath, interfacePath;
+            // 1. Coleta de todos os arquivos relevantes que a IA precisa
+            let repoCode = '', interfaceCode = '', baseInterfaceCode = '', testCode = '';
             try {
-              repoPath = execSync('find . -type f -name "*repository.ts" ! -name "*.interface.ts" ! -name "*.spec.ts" ! -name "*.test.ts"').toString().trim().split('\n')[0];
-              interfacePath = execSync('find . -type f -name "*repository.interface.ts"').toString().trim().split('\n')[0];
-            } catch (error) { core.setFailed('Arquivos de repositório ou interface não encontrados.'); return; }
+              // Função auxiliar para ler arquivos, tratando o erro se não encontrar
+              const readFileOrDefault = (command) => {
+                try {
+                  const path = execSync(command).toString().trim().split('\n')[0];
+                  return path ? fs.readFileSync(path, 'utf8') : '';
+                } catch (e) {
+                  console.log(`Arquivo não encontrado com o comando: ${command}`);
+                  return ''; // Retorna string vazia se o arquivo não for encontrado
+                }
+              };
 
-            // Normaliza os caminhos para importação correta
-            const relativeInterfacePath = path.relative(path.dirname(repoPath), interfacePath).replace(/\.ts$/, '');
+              // Tenta encontrar e ler todos os arquivos que vimos no log do CLI
+              repoCode = readFileOrDefault('find . -type f -name "*order.repository.ts" ! -name "*.spec.ts"');
+              interfaceCode = readFileOrDefault('find . -type f -name "*order-repository.interface.ts"');
+              baseInterfaceCode = readFileOrDefault('find . -type f -name "*repository-interface.ts" ! -name "*order-repository.interface.ts"');
+              testCode = readFileOrDefault('find . -type f \\( -name "*order.repository.spec.ts" -o -name "*order.repository.test.ts" \\)');
+
+              if (!repoCode || !interfaceCode) {
+                core.setFailed('Não foi possível encontrar o arquivo da classe do repositório ou da interface principal.');
+                return;
+              }
+            } catch (error) {
+              core.setFailed(`Erro ao ler os arquivos do projeto: ${error.message}`);
+              return;
+            }
             
-            // Conteúdo do arquivo de teste que força a verificação
-            const testFileContent = `
-              import { ${path.basename(interfacePath, '.ts')} } from '${relativeInterfacePath}';
-              import { ${path.basename(repoPath, '.ts')} } from './${path.basename(repoPath, '.ts')}';
-              
-              // Se a classe não implementar a interface corretamente, esta linha causará um erro de compilação.
-              const _test: ${path.basename(interfacePath, '.ts')} = new ${path.basename(repoPath, '.ts')}({} as any);
-              console.log('Verificação de tipo forçada com sucesso.');
+            // 2. Monta o prompt inspirado no raciocínio do CLI
+            const prompt = `
+              Você é um corretor de código sênior, especialista em DDD e TypeScript. Sua tarefa é analisar os arquivos de um projeto para verificar se a implementação de um repositório está completa.
+
+              **Contexto do Projeto (Arquivos Relevantes):**
+
+              --- ARQUIVO 1: A Interface Base (repository-interface.ts) ---
+              \`\`\`typescript
+              ${baseInterfaceCode || 'Não encontrado.'}
+              \`\`\`
+
+              --- ARQUIVO 2: A Interface Específica (order-repository.interface.ts) ---
+              \`\`\`typescript
+              ${interfaceCode}
+              \`\`\`
+
+              --- ARQUIVO 3: A Classe de Implementação (order.repository.ts) ---
+              \`\`\`typescript
+              ${repoCode}
+              \`\`\`
+
+              --- ARQUIVO 4: Os Testes (order.repository.spec.ts) ---
+              \`\`\`typescript
+              ${testCode || 'Não encontrado.'}
+              \`\`\`
+
+              **Sua Tarefa (Checklist):**
+              1.  Combine os métodos da "Interface Base" e da "Interface Específica" para criar a lista completa de métodos necessários.
+              2.  Verifique se a "Classe de Implementação" contém **todos** os métodos dessa lista completa.
+              3.  Analise os "Testes" para ver se eles cobrem os métodos implementados.
+
+              **Formato de Saída (JSON Obrigatório):**
+              Preencha o JSON abaixo com sua análise.
+              {
+                "is_implementation_complete": <true_or_false>,
+                "missing_methods": ["<liste aqui os nomes dos métodos faltantes, se houver>"],
+                "final_status": "<APROVADO ou REPROVADO>",
+                "feedback": "<Justifique sua decisão em um parágrafo, explicando o que está correto ou o que está faltando.>"
+              }
             `;
             
-            // Cria o arquivo no mesmo diretório da classe do repositório
-            const testFilePath = path.join(path.dirname(repoPath), '_fc_correcao_test.ts');
-            fs.writeFileSync(testFilePath, testFileContent);
-            console.log(`Arquivo de verificação criado em: ${testFilePath}`);
+            const apiKey = '${{ secrets.GOOGLE_API_KEY }}';
+            const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + apiKey;
             
-      - name: 10. Verificação final com o Compilador TypeScript (TSC)
-        if: steps.create_test_file.outcome == 'success'
-        id: tsc_check
-        working-directory: ${{ steps.find_project_dir.outputs.path }}
-        continue-on-error: true
-        run: npx tsc --noEmit --skipLibCheck
+            const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], "generationConfig": { "responseMimeType": "application/json" } }) });
+            const data = await response.json();
+            if (!response.ok || !data.candidates) { core.setFailed('Erro ao chamar a API do Gemini: ' + JSON.stringify(data)); return; }
+            const jsonText = data.candidates[0].content.parts[0].text;
+            const result = JSON.parse(jsonText);
 
-      - name: 11. Decisão e Feedback Final
-        if: steps.create_test_file.outcome == 'success'
-        run: |
-          if [ "${{ steps.tsc_check.outcome }}" = "success" ]; then
-            echo "STATUS=APROVADO"
-            echo "FEEDBACK=Parabéns! O projeto foi aprovado. Todos os testes passaram e a classe Repository implementa corretamente a Interface, validado pelo compilador TypeScript."
-          else
-            echo "STATUS=REPROVADO"
-            echo "FEEDBACK=Olá! Seus testes passaram, parabéns! No entanto, a classe Repository não está implementando corretamente todos os métodos da Interface. Revise os erros de compilação no log do passo anterior para ver exatamente quais métodos ou tipos precisam de ajuste."
-          fi
-          # Este passo não precisa mais do exit 1, ele apenas prepara o feedback.
-          
-      - name: 12. Exibindo Resultado Final
+            core.setOutput('status', result.final_status);
+            core.setOutput('feedback', result.feedback);
+
+      - name: 10. Exibindo Feedback Final
         if: steps.clone_repo.outcome == 'success' && steps.run_tests.outcome == 'success'
+        env:
+          STATUS: ${{ steps.gemini_analysis_and_process.outputs.status }}
+          FEEDBACK: ${{ steps.gemini_analysis_and_process.outputs.feedback }}
         run: |
-          # Este passo foi simplificado e agora é o único ponto de saída
-          STATUS='${{ steps.tsc_check.outcome == 'success' && 'APROVADO' || 'REPROVADO' }}'
-          FEEDBACK='...' # A mensagem de feedback precisa ser passada do passo 11
-          # A lógica ficou complexa, vamos simplificar.
+          echo "========================================="
+          echo "O resultado da correção é: $STATUS"
+          echo "========================================="
+          echo "Feedback Final:"
+          echo "$FEEDBACK"
+          if [ "$STATUS" != "APROVADO" ]; then
+            exit 1
+          fi
