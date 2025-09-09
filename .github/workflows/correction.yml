@@ -41,40 +41,59 @@ jobs:
           elif [ -f package-lock.json ]; then npm ci;
           else npm install; fi
 
+      # MUDANÇA 1: Adicionamos um ID e a propriedade 'continue-on-error'
       - name: 6. Rodando testes unitários
+        id: run_tests
         working-directory: ${{ steps.find_project_dir.outputs.path }}
+        continue-on-error: true # Permite que o workflow continue mesmo se os testes falharem
         run: npm test
       
-      - name: 7. Análise Personalizada com Gemini
+      # PASSO NOVO: Este passo só executa se o passo anterior ('run_tests') falhar
+      - name: 7. Feedback para Testes Falhos
+        if: steps.run_tests.outcome == 'failure'
+        run: |
+          echo "========================================="
+          echo "STATUS: REPROVADO (Falha nos Testes)"
+          echo "========================================="
+          echo "Feedback para o Aluno:"
+          echo ""
+          echo "Olá! Recebemos seu desafio."
+          echo ""
+          echo "Após executar o comando para rodar os testes, identificamos que um ou mais testes falharam."
+          echo "Lembre-se que, conforme o enunciado, todos os testes devem passar para que o desafio seja aprovado."
+          echo ""
+          echo "Por favor, revise a saída dos testes no log acima, faça os ajustes necessários e envie o projeto novamente."
+          echo ""
+          echo "Bom trabalho e continue assim!"
+          
+          # Encerra o workflow com status de falha
+          exit 1
+      
+      # MUDANÇA 2: Os passos seguintes agora só rodam se os testes passarem
+      - name: 8. Análise Personalizada com Gemini
+        if: steps.run_tests.outcome == 'success'
         id: gemini_analysis_and_process
         uses: actions/github-script@v7
-        # CORREÇÃO: Usamos 'env' para criar uma variável de ambiente para o script
         env:
           PROJECT_PATH: ${{ steps.find_project_dir.outputs.path }}
         with:
           script: |
+            // O script da IA continua exatamente o mesmo
             const fs = require('fs');
             const { execSync } = require('child_process');
-            
-            // MUDANÇA: Lemos a variável de ambiente criada com 'env'
             const projectDir = process.env.PROJECT_PATH;
             process.chdir(projectDir);
-
-            // O resto do script funciona como antes
             try { execSync('sudo apt-get update && sudo apt-get install -y tree'); } catch (e) { console.log("Não foi possível instalar o tree."); }
             const folderStructure = execSync('tree -L 3 || echo "Erro ao gerar árvore."').toString();
-            
             let repoPath, interfacePath, testPath;
             try {
               repoPath = execSync('find . -type f -name "*repository.ts" ! -name "*.interface.ts" ! -name "*.spec.ts" ! -name "*.test.ts"').toString().trim().split('\n')[0];
               interfacePath = execSync('find . -type f -name "*repository.interface.ts"').toString().trim().split('\n')[0];
               testPath = execSync('find . -type f \\( -name "*repository.spec.ts" -o -name "*repository.test.ts" \\)').toString().trim().split('\n')[0];
             } catch (error) { core.setFailed('Arquivos essenciais (repositório, interface ou teste) não encontrados.'); return; }
-
             const repoCode = fs.readFileSync(repoPath, 'utf8');
             const interfaceCode = fs.readFileSync(interfacePath, 'utf8');
             const testCode = fs.readFileSync(testPath, 'utf8');
-            
             const prompt = `
               Você é um Sênior Software Engineer e instrutor na Fullcycle, especialista em DDD e TypeScript. Sua tarefa é avaliar o desafio de um aluno, seguindo a mesma lógica de um corretor humano experiente, que é flexível com nomes mas rigoroso com conceitos.
               **REGRAS DE CORREÇÃO:**
@@ -92,7 +111,6 @@ jobs:
               **Formato de Saída (JSON Obrigatório):**
               { "analysis_details": { "folder_structure": { "is_correct": <true_or_false>, "feedback": "<Seu feedback>" }, "repository_implementation": { "is_correct": <true_or_false>, "feedback": "<Seu feedback>" }, "test_coverage": { "is_correct": <true_or_false>, "feedback": "<Seu feedback>" } }, "final_decision": { "status": "<APROVADO, APROVADO_COM_RESSALVAS, ou REPROVADO>", "justification": "<Seu feedback final>" } }
             `;
-            
             const apiKey = '${{ secrets.GOOGLE_API_KEY }}';
             const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=' + apiKey;
             const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ parts: [{ text: prompt.replace("(Aqui entrarão a estrutura de pastas e o conteúdo dos arquivos do aluno)", `\n**Estrutura de Pastas:**\n\`\`\`\n${folderStructure}\`\`\`\n**Interface:**\n\`\`\`typescript\n${interfaceCode}\`\`\`\n**Repositório:**\n\`\`\`typescript\n${repoCode}\`\`\`\n**Testes:**\n\`\`\`typescript\n${testCode}\`\`\``) }] }], "generationConfig": { "responseMimeType": "application/json" } }) });
@@ -103,7 +121,8 @@ jobs:
             core.setOutput('status', result.final_decision.status);
             core.setOutput('feedback', result.final_decision.justification);
 
-      - name: 8. Exibindo Feedback Final Personalizado
+      - name: 9. Exibindo Feedback Final Personalizado
+        if: steps.run_tests.outcome == 'success'
         run: |
           STATUS='${{ steps.gemini_analysis_and_process.outputs.status }}'
           FEEDBACK='${{ steps.gemini_analysis_and_process.outputs.feedback }}'
