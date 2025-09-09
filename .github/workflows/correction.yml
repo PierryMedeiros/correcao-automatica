@@ -13,23 +13,19 @@ jobs:
   correction-pipeline:
     runs-on: ubuntu-latest
     steps:
+      # Passos 1 a 8 permanecem exatamente como no seu arquivo funcional
       - name: 1. Configurando ambiente Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '18'
-
       - name: 2. Configurando PNPM
         uses: pnpm/action-setup@v3
         with:
           version: 8
-
-      # MUDANÇA 1: Adicionado 'id' e 'continue-on-error'
       - name: 3. Clonando repositório do aluno
         id: clone_repo
-        continue-on-error: true # Não para o workflow se a clonagem falhar
+        continue-on-error: true
         run: git clone ${{ github.event.inputs.repo_url }} .
-      
-      # PASSO NOVO: Só roda se o passo 'clone_repo' falhar
       - name: 4. Feedback para Falha na Clonagem
         if: steps.clone_repo.outcome == 'failure'
         run: |
@@ -37,21 +33,13 @@ jobs:
           echo "STATUS: REPROVADO (Erro no Repositório)"
           echo "========================================="
           echo "Feedback para o Aluno:"
-          echo ""
           echo "Olá! Esperamos que esteja tudo bem."
-          echo ""
           echo "Não conseguimos acessar o seu repositório. Isso geralmente acontece por um destes motivos:"
           echo "1. O link enviado está incorreto ou incompleto."
           echo "2. O seu repositório está configurado como 'Privado'."
-          echo ""
           echo "Por gentileza, verifique se o link está correto e se o repositório está como 'Público'."
-          echo ""
           echo "Após fazer o ajuste, envie o desafio novamente para correção."
-          
-          # Encerra o workflow com status de falha
           exit 1
-      
-      # MUDANÇA 2: Os passos seguintes agora dependem do sucesso da clonagem
       - name: 5. Encontrando o diretório principal do projeto
         if: steps.clone_repo.outcome == 'success'
         id: find_project_dir
@@ -59,7 +47,6 @@ jobs:
           PROJECT_PATH=$(dirname $(find . -name "package.json" -print -quit))
           echo "Projeto encontrado no diretório: $PROJECT_PATH"
           echo "path=$PROJECT_PATH" >> $GITHUB_OUTPUT
-
       - name: 6. Instalando dependências
         if: steps.clone_repo.outcome == 'success'
         working-directory: ${{ steps.find_project_dir.outputs.path }}
@@ -68,14 +55,12 @@ jobs:
           elif [ -f yarn.lock ]; then yarn install;
           elif [ -f package-lock.json ]; then npm ci;
           else npm install; fi
-
       - name: 7. Rodando testes unitários
         if: steps.clone_repo.outcome == 'success'
         id: run_tests
         working-directory: ${{ steps.find_project_dir.outputs.path }}
         continue-on-error: true
         run: npm test
-      
       - name: 8. Feedback para Testes Falhos
         if: steps.clone_repo.outcome == 'success' && steps.run_tests.outcome == 'failure'
         run: |
@@ -83,17 +68,14 @@ jobs:
           echo "STATUS: REPROVADO (Falha nos Testes)"
           echo "========================================="
           echo "Feedback para o Aluno:"
-          echo ""
           echo "Olá! Recebemos seu desafio."
-          echo ""
           echo "Após executar o comando para rodar os testes, identificamos que um ou mais testes falharam."
           echo "Lembre-se que, conforme o enunciado, todos os testes devem passar para que o desafio seja aprovado."
-          echo ""
           echo "Por favor, revise a saída dos testes, faça os ajustes necessários e envie o projeto novamente."
-          echo ""
           echo "Bom trabalho e continue assim!"
           exit 1
       
+      # --- AQUI ESTÃO AS ÚNICAS MUDANÇAS ---
       - name: 9. Análise Personalizada com Gemini
         if: steps.clone_repo.outcome == 'success' && steps.run_tests.outcome == 'success'
         id: gemini_analysis_and_process
@@ -102,11 +84,11 @@ jobs:
           PROJECT_PATH: ${{ steps.find_project_dir.outputs.path }}
         with:
           script: |
-            // O script da IA continua o mesmo
             const fs = require('fs');
             const { execSync } = require('child_process');
             const projectDir = process.env.PROJECT_PATH;
             process.chdir(projectDir);
+            
             try { execSync('sudo apt-get update && sudo apt-get install -y tree'); } catch (e) { console.log("Não foi possível instalar o tree."); }
             const folderStructure = execSync('tree -L 3 || echo "Erro ao gerar árvore."').toString();
             let repoPath, interfacePath, testPath;
@@ -118,32 +100,58 @@ jobs:
             const repoCode = fs.readFileSync(repoPath, 'utf8');
             const interfaceCode = fs.readFileSync(interfacePath, 'utf8');
             const testCode = fs.readFileSync(testPath, 'utf8');
+            
+            // MUDANÇA 1: Prompt muito mais rigoroso
             const prompt = `
-              Você é um Sênior Software Engineer e instrutor na Fullcycle, especialista em DDD e TypeScript. Sua tarefa é avaliar o desafio de um aluno, seguindo a mesma lógica de um corretor humano experiente, que é flexível com nomes mas rigoroso com conceitos.
-              **REGRAS DE CORREÇÃO:**
-              - **Seja flexível com nomes de arquivos e métodos.** O importante é a intenção. Por exemplo, \`findAll\`, \`getAll\`, e \`ProcurarTodos\` são todos válidos para a mesma operação de "buscar todos". \`order.repository.ts\` e \`OrderRepo.ts\` são nomes de arquivo aceitáveis. Reprove apenas por nomes muito ruins ou confusos.
-              - **O critério principal é a aplicação correta dos conceitos** de DDD, TypeScript e a completude da solução.
-              **CHECKLIST DE AVALIAÇÃO:**
-              1.  **Estrutura de Pastas:** A estrutura do projeto separa claramente as responsabilidades, especialmente as camadas de \`domain\` e \`infrastructure\`?
-              2.  **Implementação do Repositório:**
-                  - Existe uma classe que funciona como um repositório (\`OrderRepository\`)?
-                  - Essa classe implementa uma interface (\`OrderRepositoryInterface\`)?
-                  - A classe contém métodos que cobrem as 4 lógicas essenciais: **criar, buscar um, buscar todos, e atualizar**?
-              3.  **Cobertura de Testes:** Analisando os arquivos de teste, existem testes que validam as 4 operações (criar, buscar um, buscar todos, atualizar) do repositório?
+              Você é um corretor de desafios automatizado, agindo como um revisor de código sênior extremamente rigoroso e literal.
+              **Tarefa:** Sua tarefa é seguir o checklist de avaliação passo a passo, sem fazer suposições. A completude é o critério mais importante.
+
+              **Checklist de Avaliação (Siga estritamente):**
+              1.  **Análise da Interface:** Leia o código da Interface e liste em um array de strings todos os nomes dos métodos que ela define.
+              2.  **Análise da Classe:** Leia o código da Classe do Repositório e liste em um array de strings todos os nomes dos métodos públicos que ela implementa.
+              3.  **Análise Comparativa:** Compare as duas listas. A classe implementa TODOS os métodos da interface? Responda 'true' ou 'false'.
+              4.  **Análise de Testes:** Analise o código de teste. Para cada método implementado na classe, existe um teste correspondente? Responda 'true' ou 'false'.
+              5.  **Análise de Estrutura:** A estrutura de pastas separa as camadas 'domain' e 'infrastructure'? Responda 'true' ou 'false'.
+
               **Contexto do Projeto do Aluno:**
               (Aqui entrarão a estrutura de pastas e o conteúdo dos arquivos do aluno)
+              
               **Formato de Saída (JSON Obrigatório):**
-              { "analysis_details": { "folder_structure": { "is_correct": <true_or_false>, "feedback": "<Seu feedback>" }, "repository_implementation": { "is_correct": <true_or_false>, "feedback": "<Seu feedback>" }, "test_coverage": { "is_correct": <true_or_false>, "feedback": "<Seu feedback>" } }, "final_decision": { "status": "<APROVADO, APROVADO_COM_RESSALVAS, ou REPROVADO>", "justification": "<Seu feedback final>" } }
+              Preencha o JSON abaixo com base na sua análise literal.
+              {
+                "evaluation": {
+                  "interface_methods": ["<lista de métodos da interface>"],
+                  "class_methods": ["<lista de métodos da classe>"],
+                  "is_implementation_complete": <true_or_false>,
+                  "are_all_methods_tested": <true_or_false>,
+                  "is_structure_correct": <true_or_false>
+                },
+                "final_decision": {
+                  "status": "<APROVADO ou REPROVADO>",
+                  "justification": "<Justifique sua decisão. Se for 'REPROVADO', explique exatamente o que faltou com base no checklist acima (ex: 'A implementação está incompleta. Faltam os métodos X e Y definidos na interface.').>"
+                }
+              }
             `;
+            
+            // MUDANÇA 2: Usando o modelo gemini-2.5-flash
             const apiKey = '${{ secrets.GOOGLE_API_KEY }}';
-            const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=' + apiKey;
+            const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + apiKey;
+            
             const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ parts: [{ text: prompt.replace("(Aqui entrarão a estrutura de pastas e o conteúdo dos arquivos do aluno)", `\n**Estrutura de Pastas:**\n\`\`\`\n${folderStructure}\`\`\`\n**Interface:**\n\`\`\`typescript\n${interfaceCode}\`\`\`\n**Repositório:**\n\`\`\`typescript\n${repoCode}\`\`\`\n**Testes:**\n\`\`\`typescript\n${testCode}\`\`\``) }] }], "generationConfig": { "responseMimeType": "application/json" } }) });
             const data = await response.json();
             if (!response.ok || !data.candidates) { core.setFailed('Erro ao chamar a API do Gemini. Resposta: ' + JSON.stringify(data)); return; }
             const jsonText = data.candidates[0].content.parts[0].text;
             const result = JSON.parse(jsonText);
-            core.setOutput('status', result.final_decision.status);
-            core.setOutput('feedback', result.final_decision.justification);
+            
+            // MUDANÇA 3: Dupla checagem de segurança
+            const eval = result.evaluation;
+            if (result.final_decision.status === 'APROVADO' && (!eval.is_implementation_complete || !eval.are_all_methods_tested)) {
+              core.setOutput('status', 'REPROVADO');
+              core.setOutput('feedback', 'REVISÃO MANUAL SUGERIDA: A IA aprovou o projeto, mas a análise detalhada indica que requisitos de implementação ou testes não foram cumpridos.');
+            } else {
+              core.setOutput('status', result.final_decision.status);
+              core.setOutput('feedback', result.final_decision.justification);
+            }
 
       - name: 10. Exibindo Feedback Final Personalizado
         if: steps.clone_repo.outcome == 'success' && steps.run_tests.outcome == 'success'
@@ -155,6 +163,6 @@ jobs:
           echo "========================================="
           echo "Feedback da nossa IA:"
           echo "$FEEDBACK"
-          if [ "$STATUS" = "REPROVADO" ]; then
+          if [ "$STATUS" != "APROVADO" ]; then
             exit 1
           fi
