@@ -41,16 +41,9 @@ jobs:
       - name: 5. Rodando testes unitários
         run: npm test
       
-      # --- NOVOS PASSOS COM GEMINI ---
+      # --- PASSOS DO GEMINI CORRIGIDOS ---
       
-      - name: 6. Preparando contexto para a IA (Estrutura de pastas)
-        # O comando 'tree' não vem instalado por padrão, então o instalamos.
-        run: |
-          sudo apt-get update && sudo apt-get install -y tree
-          # Gera a árvore de diretórios e salva em uma variável de ambiente
-          echo "TREE_STRUCTURE=$(tree -L 3)" >> $GITHUB_ENV
-
-      - name: 7. Análise da Estrutura e Código com Gemini
+      - name: 6. Análise da Estrutura e Código com Gemini
         id: gemini_analysis
         uses: actions/github-script@v7
         with:
@@ -58,7 +51,16 @@ jobs:
             const fs = require('fs');
             const { execSync } = require('child_process');
 
-            // 1. Encontrar os arquivos relevantes (de forma mais robusta)
+            // 1. Instala o 'tree' e captura a estrutura de pastas
+            // ESTA É A CORREÇÃO: executamos o comando aqui dentro
+            try {
+              execSync('sudo apt-get update && sudo apt-get install -y tree');
+            } catch (e) {
+              console.log("Não foi possível instalar o tree, continuando sem ele.");
+            }
+            const folderStructure = execSync('tree -L 3 || echo "Não foi possível gerar a árvore de diretórios."').toString();
+            
+            // 2. Encontrar os arquivos relevantes
             let repoPath, interfacePath;
             try {
               repoPath = execSync('find . -type f -name "order.repository.ts"').toString().trim();
@@ -70,9 +72,8 @@ jobs:
 
             const repoCode = fs.readFileSync(repoPath, 'utf8');
             const interfaceCode = fs.readFileSync(interfacePath, 'utf8');
-            const folderStructure = process.env.TREE_STRUCTURE;
-
-            // 2. Montar o prompt
+            
+            // 3. Montar o prompt (o mesmo de antes)
             const prompt = `
               Você é um Sênior Software Engineer especialista em Domain-Driven Design (DDD) e TypeScript, corrigindo o desafio de um aluno.
 
@@ -104,7 +105,7 @@ jobs:
               **Formato de Saída (JSON Obrigatório):**
             `;
 
-            // 3. Chamar a API do Gemini
+            // 4. Chamar a API do Gemini (o mesmo de antes)
             const apiKey = '${{ secrets.GOOGLE_API_KEY }}';
             const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=' + apiKey;
             
@@ -125,28 +126,20 @@ jobs:
             const jsonText = data.candidates[0].content.parts[0].text;
             core.setOutput('result', jsonText);
 
-      - name: 8. Resultado Final com Base na IA
+      # O resto do arquivo permanece o mesmo
+      - name: 7. Resultado Final com Base na IA
         run: |
           RESULTADO_IA='${{ steps.gemini_analysis.outputs.result }}'
-          
-          # Extrai as conclusões da IA usando 'jq'
           ESTRUTURA_OK=$(echo $RESULTADO_IA | jq '.analysis.ddd_folder_structure.is_correct')
           REPO_OK=$(echo $RESULTADO_IA | jq '.analysis.repository_implementation.is_correct')
-          FEEDBACK=$(echo $RESULTADO_IA | jq '.feedback_for_student')
-
-          echo "--- Análise da IA ---"
-          echo "Estrutura de pastas DDD correta? $ESTRUTURA_OK"
-          echo "Implementação do Repository correta? $REPO_OK"
-          echo "---------------------"
           
-          # Lógica de Decisão Final
           if [ "$ESTRUTURA_OK" = "true" ] && [ "$REPO_OK" = "true" ]; then
             echo "STATUS_FINAL=APROVADO" >> $GITHUB_ENV
           else
             echo "STATUS_FINAL=REPROVADO" >> $GITHUB_ENV
           fi
 
-      - name: 9. Exibindo Feedback Final
+      - name: 8. Exibindo Feedback Final
         run: |
           RESULTADO_IA='${{ steps.gemini_analysis.outputs.result }}'
           FEEDBACK=$(echo $RESULTADO_IA | jq '.feedback_for_student')
@@ -155,9 +148,8 @@ jobs:
           echo "O resultado da correção é: ${{ env.STATUS_FINAL }}"
           echo "========================================="
           echo "Feedback da nossa IA:"
-          echo $FEEDBACK # 'jq' já formata como uma string limpa
+          echo $FEEDBACK
 
-          # Se o projeto foi reprovado, falha o workflow para o ícone ficar vermelho
           if [ "${{ env.STATUS_FINAL }}" = "REPROVADO" ]; then
             exit 1
           fi
