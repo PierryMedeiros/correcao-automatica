@@ -77,6 +77,7 @@ Contrato definido no plano; materializado na F0.
 |---|---|
 | [`docs/project-plan.md`](docs/project-plan.md) | **Fonte da verdade.** Arquitetura, modelo de dados (§5), máquina de estados (§6), contrato do dossiê (§7), runner (§8), edge cases (§10), fases e critérios de aceite (§13) |
 | [`docs/STATUS.md`](docs/STATUS.md) | Onde paramos: feito, em andamento, próximo passo, decisões |
+| [`docs/INTEGRATION.md`](docs/INTEGRATION.md) | O que **não** sabemos da API da plataforma FC: premissas e perguntas abertas para a equipe, antes de escrever o driver |
 | [`CLAUDE.md`](CLAUDE.md) | Regras para quem desenvolve com IA neste repo |
 
 O plano é documento vivo: mudança de arquitetura passa por ele **antes** de virar código, com o porquê registrado no Apêndice B. Plano e código nunca contam histórias diferentes.

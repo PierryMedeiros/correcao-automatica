@@ -24,18 +24,29 @@ apps/api/          # NestJS (REST, SSE, fila, Job Controller, janitor)
 packages/shared/   # tipos de domínio, dossie.schema.json, parser de bloco
 runner/            # Dockerfile, entrypoint.sh, prompt-template.md
 skills-correcao/   # skills corrige-* (fonte dos critérios de correção — conteúdo, não código)
-docs/              # project-plan.md, STATUS.md, INTEGRATION.md, spikes.md, runbook.md
-scripts/           # utilitários
+docs/              # project-plan.md, STATUS.md, INTEGRATION.md,
+                   # spikes.md (nasce na F0), runbook.md (nasce na F7)
+scripts/           # utilitários; scripts/hooks/ = guards executáveis das regras duras
 compose.yaml       # Postgres de desenvolvimento
 ```
 
-## Comandos (contrato; materializar na F0)
+## Comandos
+
+Node fixado em `.nvmrc` (24); pnpm vem por corepack, versão pinada em `packageManager`.
+
+Já funcionam:
 
 - `docker compose up -d` — Postgres de dev
-- `pnpm dev` — api + web em watch
-- `pnpm test` — unidade · `pnpm test:e2e` — golden repos
-- `pnpm lint` — eslint + prettier
-- `pnpm db:migrate` / `pnpm db:seed` — Prisma
+- `pnpm test` — vitest · `pnpm test:watch`
+- `pnpm lint` — eslint + prettier · `pnpm format` — prettier --write
+- `pnpm typecheck` — tsc --noEmit
+- `pnpm guards` — selftest dos hooks de `scripts/hooks/`
+
+Nascem com a fase que os torna possíveis (não são dívida, são sequência):
+
+- `pnpm db:migrate` / `pnpm db:seed` — Prisma, na F1
+- `pnpm dev` — api + web em watch, quando as apps existirem (F5/F6)
+- `pnpm test:e2e` — golden repos, na F7
 
 ## Arquitetura de código
 
@@ -62,6 +73,7 @@ compose.yaml       # Postgres de desenvolvimento
 - F0 primeiro, spikes antes de código de produção: S1 (headless + token — risco nº 1), S2 (netns), S3 (compose sem portas + network externa). Resultados vão em `docs/spikes.md`.
 - Testes nascem junto com o código que testam (parser, máquina de estados e validador do dossiê têm suite desde o primeiro commit que os cria).
 - Commits: conventional commits (`feat:`, `fix:`, `docs:`, `chore:`), mensagem em português — só quando o usuário pedir (regra dura 9), sempre pela skill `commit-e-push`.
+- Manutenção das instruções: ao editar este arquivo ou qualquer skill em `.claude/skills/`, releia os demais e verifique a coerência entre eles. Instrução aqui e instrução em skill que se contradizem fazem o agente escolher sozinho qual obedecer — e a escolha é invisível. Contradição encontrada se resolve antes de commitar, e a resolução vai na mensagem do commit.
 - Ao encerrar a sessão: atualizar `docs/STATUS.md` (feito / em andamento / próximo passo / decisões).
 
 ## Convenções

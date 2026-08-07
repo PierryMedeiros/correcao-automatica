@@ -1,0 +1,9 @@
+packages:
+  - apps/*
+  - packages/*
+
+# O pnpm 11 exige decisão explícita sobre quem pode rodar script de instalação.
+# esbuild é dependência do vitest e o script é o que linka o binário da plataforma —
+# sem ele o test runner não sobe. Toda entrada nova aqui é decisão consciente, não default.
+allowBuilds:
+  esbuild: true

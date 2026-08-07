@@ -1,0 +1,10 @@
+node_modules
+dist
+coverage
+pnpm-lock.yaml
+
+# Markdown deste repo é prosa escrita à mão (plano, skills, devolutivas) com quebras
+# de linha e tabelas deliberadas — reformatar automaticamente destruiria o layout.
+*.md
+docs/
+.claude/skills/

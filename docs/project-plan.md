@@ -2,9 +2,14 @@
 
 Sistema de correção assistida por IA para desafios de alunos da Full Cycle.
 
-- Versão: 1.0 — Agosto/2026
+- Versão: 1.3 — Agosto/2026
 - Nome-código: "Banca" (a banca que corrige). Provisório; trocar depois é um find-replace.
 - Status: documento vivo. Mudança de arquitetura passa por aqui antes de virar código.
+- Envelhecimento: quando uma fase é marcada como implementada, o **código** passa a ser a
+  referência primária para os detalhes das seções correspondentes — assinatura de função, nome de
+  campo, formato exato. O plano continua sendo a fonte da verdade de **arquitetura e intenção**, e
+  mudança de arquitetura continua passando por ele antes do código. Nenhuma seção é arquivada ou
+  removida: o plano é o registro do porquê, e porquê não expira.
 - Localização: `docs/project-plan.md`.
 
 ---
@@ -91,16 +96,21 @@ Referências oficiais usadas: `code.claude.com/docs/en/headless` (modo headless,
 Layout do repositório:
 
 ```
-banca/
+correcao-automatica/
   apps/web/          # Vue
   apps/api/          # NestJS
   packages/shared/   # tipos TS, JSON Schema do dossiê, parser de bloco
   runner/            # Dockerfile, entrypoint.sh, prompt-template.md
-  skills-correcao/   # as ~50 skills corrige-* (ou symlink/submódulo da pasta atual)
-  docs/              # project-plan.md, INTEGRATION.md, spikes.md, runbook.md, decisions.md
-  scripts/           # utilitários de dev
+  docs/              # project-plan.md, STATUS.md, INTEGRATION.md, spikes.md, runbook.md
+  scripts/           # utilitários de dev e guards executáveis (scripts/hooks/)
   compose.yaml       # Postgres de desenvolvimento
 ```
+
+As skills `corrige-*` **não moram nesta árvore**. Elas são conteúdo com ciclo de vida próprio
+(mudam quando o enunciado do desafio muda, não quando o sistema muda) e ficam em um diretório
+externo, apontado por `SKILLS_DIR` no `.env` — sem cópia, sem symlink, sem submódulo. O Job
+Controller monta `$SKILLS_DIR/<skill_slug>` como `:ro` no runner (§8). Consequência aceita: o
+sistema depende de um diretório fora do seu versionamento; quem o mantém versionado é ele mesmo.
 
 ## 5. Modelo de dados
 
@@ -113,7 +123,7 @@ Convenção: `snake_case`, timestamps `created_at/updated_at` em tudo, ids `bigi
 | projeto | text | ex.: "GoLang" |
 | fase | text | ex.: "Client-Server-API"; UNIQUE(projeto, fase) |
 | skill_slug | text | nome da pasta da skill `corrige-*` |
-| modo_avaliacao | enum: execucao, estatica | copiado da skill; o sistema confere coerência com o dossiê |
+| modo_avaliacao | enum: execucao, estatica | **esta tabela é a fonte da verdade do modo**, preenchida à mão no CSV do seed — as skills não declaram modo no frontmatter e não serão alteradas para isso. A proteção contra CSV errado é o §7: o dossiê relata o modo que a skill de fato exigiu, e divergência vira gatilho de revisão |
 | base_repo_url | text null | repo base/template do desafio; usado para detectar aluno que colou o link do template e para o delta de lint/testes |
 | timeout_s | int null | override do timeout padrão do job (1500s) para desafios pesados |
 | ativo | bool | desativar sem deletar |
@@ -135,7 +145,9 @@ Convenção: `snake_case`, timestamps `created_at/updated_at` em tudo, ids `bigi
 | status | enum (§6) | |
 | status_detalhe | text null | motivo humano-legível (ex.: "repo privado", "link do repositório base") |
 
-Índice único parcial: (aluno_email, projeto, fase) WHERE status em estados ativos — garante que só existe uma submissão ativa por aluno+desafio (a nova substitui a antiga, §10 caso 5).
+Índice único parcial: (aluno_email, projeto, fase) WHERE status é **ativo** — garante que só existe uma submissão ativa por aluno+desafio (a nova substitui a antiga, §10 caso 5).
+
+**Ativo** é definido por complemento, não por lista: qualquer status que **não** esteja em `{enviada, cancelada, substituida}` — exatamente os "terminais de fato" do §6. Definir por complemento é deliberado: estado novo entra como ativo automaticamente, e as duas listas não têm como divergir. Consequência: `link_invalido`, `sem_skill` e `erro` são ativos, então o aluno que reenvia com o link corrigido **substitui** a submissão travada em vez de criar uma segunda linha.
 
 **correcoes** — uma execução do agente sobre uma submissão (pode haver mais de uma por retries/reprocessamento).
 
@@ -158,7 +170,7 @@ Convenção: `snake_case`, timestamps `created_at/updated_at` em tudo, ids `bigi
 | Campo | Tipo | Nota |
 |---|---|---|
 | submissao_id | fk | a vigente é a da correção mais recente; reprocessar cria nova linha e a anterior fica no histórico (auditoria) |
-| correcao_id | fk | correção que originou o rascunho |
+| correcao_id | fk **null** | correção que originou o rascunho; nulo quando não houve correção — `link_invalido` gera devolutiva a partir de template global sem gastar agente (§6) |
 | texto_agente | text | rascunho original (imutável) |
 | texto_final | text | editável pelo revisor; começa igual ao rascunho |
 | veredito_final | enum | revisor pode divergir do agente (humano é a autoridade) |
@@ -253,7 +265,7 @@ docker run -d --name fc-job-<id> \
   --label fc.job=<id> \
   --cpus 2 --memory 2.5g \
   -v <job_dir>:/workspace \
-  -v <skills_dir>/<skill_slug>:/workspace/skill:ro \
+  -v $SKILLS_DIR/<skill_slug>:/workspace/skill:ro \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -e CLAUDE_CODE_OAUTH_TOKEN=*** -e FC_JOB_ID=<id> \
   banca-runner:<tag>
@@ -283,7 +295,7 @@ Serve a plataforma FC (enquanto não há endpoints) e a segunda plataforma de cu
 
 1. Validação: `git ls-remote <url>` (timeout 30s, 2 tentativas); compara com `base_repo_url`; pina `commit_sha` (HEAD).
 2. Resolve skill via skills_map (ou usa a manual). Enfileira no pg-boss com prioridade FIFO.
-3. Worker pega o job → Job Controller cria `job_dir` em `~/banca-jobs/<id>/` e escreve nele o `prompt.txt` (montado de `runner/prompt-template.md` + dados do job: aluno, desafio, skill, SHA, comando canônico de compose com `-p` e override, contexto de tentativa anterior se houver) e o override noports gerado; cria a network `fc-job-<id>_net`; sobe o runner (§8) e o conecta a ela.
+3. Worker pega o job → Job Controller cria `job_dir` em `$JOBS_DIR/<id>/` e escreve nele o `prompt.txt` (montado de `runner/prompt-template.md` + dados do job: aluno, desafio, skill, SHA, comando canônico de compose com `-p` e override, contexto de tentativa anterior se houver) e o override noports gerado; cria a network `fc-job-<id>_net`; sobe o runner (§8) e o conecta a ela.
 4. Entrypoint do runner: clona o repo em `/workspace/repo` (clone completo, timeout 120s; se falhar por tamanho, fallback `--depth 1` e marca `historico_nao_avaliado` — skills com critério de Git Flow precisam de histórico); `git checkout <commit_sha>`; `--recurse-submodules` tolerante a falha; invoca o `claude -p` com o `prompt.txt`.
 5. Agente segue a skill: executa de verdade (ou análise estática, se a skill assim define), exercita caminho crítico, investiga ambiente vs. aluno, mede delta contra o base quando aplicável, escreve `dossie.json`.
 6. Job Controller detecta o fim, valida o dossiê (com retry corretivo, §7), roda o teardown, persiste correção + transcript + devolutiva-rascunho, aplica gatilhos programáticos (§12), aplica a política de revisão, emite SSE.
@@ -328,7 +340,7 @@ Match automático por (aluno_email, projeto, fase) contra a submissão anterior 
 | 22 | SSE cai | Cliente reconecta e refaz fetch do estado; SSE é notificação, REST é fonte da verdade |
 | 23 | Bloco colado incompleto/malformado | Preview aponta o campo faltante por linha; nada entra sem confirmação |
 | 24 | Devolutiva quase idêntica à de outro aluno (mesma skill) | Gatilho de similaridade `pg_trgm` (§12) → força revisão |
-| 25 | Devolutiva de aprovado longa demais (limite do guia da skill) | Gatilho de tamanho → força revisão |
+| 25 | Devolutiva longa demais | Gatilho de tamanho por limiares **globais** em `config` (não por skill): aprovado acima de 5 frases ou 700 caracteres; reprovado acima de 20 frases. Calibráveis na F7 como os demais → força revisão |
 | 26 | Skill exige execução, dossiê diz que só leu | Gatilho de coerência (§7) → força revisão |
 | 27 | 3+ correções com o MESMO gatilho no mesmo run | Banner destacado no dashboard + notificação (indica skill ambígua, não 3 alunos errando igual); humano decide pausar |
 | 28 | WSL suspende / máquina dorme no meio | Runbook: desativar suspensão durante runs; jobs interrompidos caem no caso 12 |
@@ -339,7 +351,8 @@ Match automático por (aluno_email, projeto, fase) contra a submissão anterior 
 - **Código de aluno é código de terceiro.** No MVP local, egress do runner fica aberto por necessidade real (instalar dependências, chamar APIs externas dos enunciados — ex.: AwesomeAPI do Client-Server-API). O que endurece na F8: stacks de aluno sem rota para a rede local, socket via proxy (permitir só compose/inspect no prefixo `fc-job-`), possivelmente rootless.
 - **Socket do Docker montado no runner = poder total sobre o Docker da máquina.** Aceito conscientemente no MVP local (uma máquina, um usuário); registrado como dívida para o cenário multiusuário/web.
 - **Token do Claude** entra por variável de ambiente lida do `.env` do host; nunca commitado; rotação = rodar `claude setup-token` de novo.
-- **PII**: nome e e-mail persistem (necessários ao fluxo); celular é descartado no parser. Job dirs (com clones) são apagados pelo janitor após 14 dias; transcripts e dossiês ficam (auditoria) — transcript no filesystem, dossiê no banco.
+- **PII**: nome e e-mail persistem (necessários ao fluxo); celular é descartado no parser. Job dirs (com clones) seguem a retenção abaixo; transcripts e dossiês ficam (auditoria) — transcript no filesystem, dossiê no banco.
+- **Retenção de job dirs, em duas classes**: um job dir **órfão** — nenhuma linha de `correcoes` o referencia, caso de crash antes de persistir ou de job fake de teste — não tem valor de auditoria e o janitor remove no próximo ciclo, independente da idade. Um job dir **referenciado** por uma correção, **inclusive `falhou` ou `timeout`**, fica 14 dias: é o transcript da falha que a auditoria precisa, e é ele que explica por que uma correção deu errado.
 - Repositórios read-only montados como `:ro` (skill); workspace é descartável por job.
 
 ## 12. Observabilidade e operação
@@ -347,8 +360,10 @@ Match automático por (aluno_email, projeto, fase) contra a submissão anterior 
 - **Logs**: pino estruturado na API/workers com `job_id`/`submissao_id` em todo log; log do entrypoint do runner vai para o job dir.
 - **Eventos**: tabela append-only alimenta a timeline do card e a auditoria.
 - **SSE**: tópicos `submissao.updated`, `run.updated`, `notificacao.created`, `sistema.pausa`.
-- **Gatilhos programáticos** (avaliados pelo backend ao fechar cada correção): tamanho da devolutiva vs. limite do guia; similaridade trigram (`pg_trgm`) contra devolutivas já geradas da mesma skill (limiar inicial 0.6, calibrar na F7); incoerência modo_avaliacao skill × dossiê; execução ausente em skill de execução; `historico_nao_avaliado` (sempre que o fallback shallow ocorreu — mais simples que mapear quais skills avaliam histórico); duração anômala (> p95 da skill). Somam-se aos autorrelatados (campo `duvidas`). Qualquer gatilho força revisão humana (§2.7). Agregação "3+ mesmo gatilho no run" = query + banner + notificação.
+- **Gatilhos programáticos** (avaliados pelo backend ao fechar cada correção): tamanho da devolutiva contra limiares globais em `config` — aprovado > 5 frases ou > 700 caracteres, reprovado > 20 frases (§10.25); similaridade trigram (`pg_trgm`) contra devolutivas já geradas da mesma skill (limiar inicial 0.6, calibrar na F7); incoerência modo_avaliacao skill × dossiê; execução ausente em skill de execução; `historico_nao_avaliado` (sempre que o fallback shallow ocorreu — mais simples que mapear quais skills avaliam histórico); duração anômala. Somam-se aos autorrelatados (campo `duvidas`). Qualquer gatilho força revisão humana (§2.7). Agregação "3+ mesmo gatilho no run" = query + banner + notificação.
+- **Duração anômala, com e sem histórico**: o critério estatístico (> p95 da skill) só entra em vigor com **n ≥ 10 correções concluídas daquela skill**. Abaixo disso não há p95 confiável e vale o fallback absoluto: duração acima de **80% do timeout efetivo** da skill (`skills_map.timeout_s` ou o default de 1500s) dispara. Sem essa regra o gatilho seria ruído puro no primeiro dia de operação, que é justamente quando ele importa mais.
 - **Métricas no dashboard (MVP)**: contadores por estado, tempo médio de correção (24h), taxa de aprovação por skill, gatilhos por tipo. Análises avançadas (tendências, exportação) ficam para F8 — a matéria-prima já está no banco desde o dia 1.
+- **Janitor**: remove containers/networks órfãos por prefixo `fc-job-`; remove job dirs órfãos (sem linha em `correcoes` que os referencie) no próximo ciclo e job dirs referenciados aos 14 dias (§11); poda imagens dangling e cache de build antigos; monitora disco (§10.19).
 - **Pausa global**: manual (botão) e automática (limite do plano, credencial, disco crítico). Jobs em andamento terminam; novos não iniciam.
 - **Backup**: cron pg-boss diário 03:00 → `pg_dump` para `./backups` (retém 14). Observação: cron do pg-boss roda dentro da API — com a API parada não há janitor nem backup; aceitável no MVP local (runbook cobre).
 - **Runbook** (`docs/runbook.md`, escrito na F7): `.wslconfig` recomendado (`processors=6`, `memory=10GB`, `swap=8GB` — hoje está em 2 núcleos, que é o gargalo real), desativar suspensão durante runs, como rodar `claude setup-token`, como recuperar de disco cheio, como restaurar backup.
@@ -357,11 +372,13 @@ Match automático por (aluno_email, projeto, fase) contra a submissão anterior 
 
 Estimativas em dias úteis de foco, solo com apoio de IA; ver disclaimer ao final da seção.
 
-### F0 — Fundação e spikes (1–2d)
+### F0 — Fundação e spikes (1–2d) ⏳ em andamento (iniciada 07/08/2026) — fundação pronta, spikes pendentes
 
 Objetivo: repo de pé e os três maiores riscos técnicos provados antes de escrever o sistema.
 
-Entregas: monorepo pnpm; `compose.yaml` com Postgres; lint/format; `docs/` com este plano, `INTEGRATION.md` inicial (o que assumimos e as perguntas para a equipe da plataforma: endpoint de pendentes com URL do repo, endpoint de postar status+feedback, formato/existência do webhook, autenticação) e `docs/spikes.md`; ambiente de dev assistido por IA (CLAUDE.md, rules e skills de desenvolvimento — próximos artefatos combinados).
+Entregas: monorepo pnpm; `compose.yaml` com Postgres; lint/format; **runner de testes (vitest) configurado no monorepo** — sem ele o "pnpm test verde" que fecha toda fase não tem onde rodar, e a F1 já nasce devendo teste; `docs/` com este plano, `INTEGRATION.md` inicial (o que assumimos e as perguntas para a equipe da plataforma: endpoint de pendentes com URL do repo, endpoint de postar status+feedback, formato/existência do webhook, autenticação) e `docs/spikes.md`; ambiente de dev assistido por IA (CLAUDE.md, skills de desenvolvimento e guards executáveis em `scripts/hooks/`).
+
+Aceite da fundação: `pnpm lint` verde; `pnpm test` verde com **ao menos 1 teste real** (não placeholder); `bash scripts/hooks/selftest.sh` verde.
 
 Spikes (aceite = os três verdes, documentados em `docs/spikes.md`):
 
@@ -371,15 +388,17 @@ Spikes (aceite = os três verdes, documentados em `docs/spikes.md`):
 
 ### F1 — Banco e domínio (1–2d)
 
-Entregas: schema Prisma completo (§5) + migrations; extensão `pg_trgm`; seed do `skills_map` via script que lê um CSV (colunas: projeto, fase, skill_slug, modo, base_repo_url, timeout_s) — preencher o CSV é ação do Pierry (§17); tabela `eventos` e `config` com defaults.
+Entregas: schema Prisma completo (§5) + migrations; extensão `pg_trgm`; seed do `skills_map` via script que lê `docs/skills-map.csv` (colunas: projeto, fase, skill_slug, modo_avaliacao, base_repo_url, timeout_s) — o arquivo já existe com as 49 linhas de `skill_slug` preenchidas e `modo_avaliacao` sugerido por heurística onde ela era confiável; completar `projeto`, `fase` e revisar o modo é ação do Pierry (§17); tabela `eventos` e `config` com defaults (incluindo os limiares de gatilho de tamanho do §12).
 
-Aceite: migrations sobem do zero; seed carrega as ~50 linhas; testes de unidade dos repositórios principais.
+O seed **recusa a linha inteira** se `projeto`, `fase`, `skill_slug` ou `modo_avaliacao` vier vazio, reportando número da linha e campo faltante — `base_repo_url` e `timeout_s` são opcionais por §5. Falhar alto aqui é barato; um `skills_map` meio preenchido vira `sem_skill` silencioso na fila, que custa muito mais caro de diagnosticar.
+
+Aceite: migrations sobem do zero; seed carrega o CSV completo; CSV com linha incompleta é recusado com mensagem apontando linha e campo; testes de unidade do acesso a dados e do parser do CSV.
 
 ### F2 — Runner e execução de jobs (3–4d)
 
 Entregas: imagem do runner (§8); Job Controller (job dir, docker run com mounts/limites/labels, acompanhamento, coleta de artefatos, teardown em camadas); gerador de override noports; conexão do runner à network do job; janitor; recuperação de órfãos no boot; jitter.
 
-Aceite: job fake (sem LLM: script que clona um repo, sobe um compose de exemplo, escreve um dossiê estático) roda fim a fim; 4 jobs fake em paralelo com o mesmo compose de portas fixas, sem colisão; matar o processo da API no meio → após restart + janitor, zero container/network/dir órfão.
+Aceite: job fake (sem LLM: script que clona um repo, sobe um compose de exemplo, escreve um dossiê estático) roda fim a fim; 4 jobs fake em paralelo com o mesmo compose de portas fixas, sem colisão; matar o processo da API no meio → após restart + janitor, zero container e zero network órfã, e zero job dir **órfão** no sentido do §11 (nenhuma linha de `correcoes` o referencia). Job dir de correção que chegou a ser persistida — inclusive `falhou` — **deve continuar lá**: apagá-lo é o bug, não o aceite.
 
 ### F3 — Correção com Claude (3–5d)
 
@@ -395,7 +414,7 @@ Aceite: cenários simulados passam — matar worker no meio, token inválido for
 
 ### F5 — API e intake (2–3d)
 
-Entregas: REST (submissões, correções, devolutivas, runs, notificações, config) + SSE; parser de bloco no `packages/shared` com suite de testes de blocos reais (incluindo malformados); endpoint de preview/confirmação; dropdown de skill manual; template de devolutiva de link inválido em `config`.
+Entregas: REST (submissões, correções, devolutivas, runs, notificações, config) + SSE; parser de bloco no `packages/shared` com suite de testes de blocos reais (incluindo malformados e com fins de linha CRLF vindos do Windows); endpoint de preview/confirmação; dropdown de skill manual; template de devolutiva de link inválido em `config`.
 
 Aceite: colar 5 blocos reais do admin → 5 submissões corretas; bloco sem repositório → erro apontado na linha do preview; `Celular:` presente no bloco → ausente no banco.
 
@@ -425,7 +444,7 @@ Ativar o receptor de webhook (payloads reais → `webhook_payloads` → escrever
 
 - **Unidade**: parser de bloco (casos reais + malformados), máquina de estados (tabela de transições §6 vira tabela de testes), validador do dossiê, gerador de override, gatilhos programáticos.
 - **Integração**: Job Controller com jobs fake (sem LLM) — teardown, órfãos, labels, network connect, limites.
-- **E2E (golden repos)**: congelar entregas reais (fork privado ou zip versionado) como fixtures — ação do Pierry (§17):
+- **E2E (golden repos)**: congelar entregas reais como fixtures **locais** — zip de cada repo, restaurado pelo harness como bare repo local e clonado via `file://` (não usar fork privado: o clone do runner é sem autenticação, e o repo original do aluno pode ser deletado a qualquer momento) — ação do Pierry (§17):
 
 | Fixture | Cobre |
 |---|---|
@@ -466,12 +485,13 @@ Ativar o receptor de webhook (payloads reais → `webhook_payloads` → escrever
 
 ## 17. Ações do Pierry (destravam fases)
 
-1. Preencher o CSV do `skills_map` (~50 linhas: projeto, fase, skill_slug, modo, base_repo_url, timeout_s quando precisar) — destrava F1.
+1. Completar `docs/skills-map.csv` — 49 linhas já vêm com `skill_slug` e com `modo_avaliacao` sugerido em 14 delas; falta preencher `projeto` e `fase` de todas, revisar os 14 modos sugeridos, classificar os 35 restantes e apontar `base_repo_url`/`timeout_s` onde fizer sentido. Destrava F1.
 2. Coletar e congelar os golden repos G1–G10 — destrava os aceites de F3/F7.
 3. Rodar `claude setup-token` e guardar o token no `.env` — destrava S1.
 4. Ajustar `.wslconfig` (`processors=6`, manter `memory=10GB`, `swap=8GB`) e desativar suspensão — destrava testes de paralelismo reais.
 5. Validar as decisões tomadas neste plano que ainda são reversíveis de graça: NestJS+Prisma, PrimeVue, nome "Banca".
-6. Confirmar com a equipe se as skills atuais declaram explicitamente o modo de avaliação (execução/estática) — se não declararem, padronizar o frontmatter delas antes da F1 facilita o CSV.
+6. ~~Confirmar se as skills declaram o modo de avaliação no frontmatter.~~ **Respondido em 07/08/2026: não declaram** — nenhuma das 49 tem campo de modo. Decidido não alterá-las: o `skills_map` é a fonte da verdade do modo, e o §7 protege contra CSV errado (o dossiê relata o modo que a skill exigiu; divergência vira gatilho).
+7. Decidir o destino do diretório de skills antes da F8. Verificado em 07/08/2026: `SKILLS_DIR` aponta para `/home/pierry/fullcycle/.claude/skills`, que **já é repositório git próprio** — versionamento resolvido. O que fica em aberto é ele morar dentro de uma pasta de configuração de ferramenta (`.claude/`): funciona na máquina local, mas quando a F8 tirar o sistema daqui o caminho vira config de servidor e esse acoplamento precisa sair.
 
 ## Apêndice A — Prompt do corretor v2 (o que sai, o que fica)
 
@@ -498,3 +518,62 @@ Revisão feita em 06/08/2026, relendo o documento integral e checando: coerênci
 9. **Miúdos**: reenvio de aluno não exige mais veredito reprovado na anterior (§9.5); devolutiva vigente em reprocessamento definida (§5); correções órfãs pós-reboot ganham marcação explícita antes de voltar à fila (§10.12).
 
 Verificado e mantido sem alteração: numeração e dependências das fases; referências cruzadas (os casos 5, 7, 9, 10, 12 e 24–27 citados no aceite da F7 existem na matriz do §10); 25 min = 1500 s consistente; teto de paralelismo 2/4 coerente entre §8, F2 e G8; nenhum resquício de `cleanDocker.sh`, senha de sudo ou `docker system prune` como mecanismo do sistema.
+
+Revisão adicional em 07/08/2026 (v1.3), fechando as contradições e ambiguidades encontradas numa
+releitura integral feita com o repositório na frente. Datas deste ponto em diante em America/Sao_Paulo.
+Nenhuma mudança de arquitetura — todas são decisão que faltava ser tomada ou texto que divergia de outro:
+
+1. **Estado "ativo" nunca fora definido** (§5). Definido por complemento dos terminais do §6 — tudo
+   fora de `{enviada, cancelada, substituida}` — para as duas listas não terem como divergir.
+   Consequência assumida: `link_invalido`, `sem_skill` e `erro` são ativos, e o aluno que reenvia com
+   o link corrigido substitui a submissão travada em vez de criar uma segunda.
+2. **`devolutivas.correcao_id` era NOT NULL e não podia ser** (§5 × §6): `link_invalido` gera
+   devolutiva por template, sem correção. Passou a nullable, com a razão registrada na própria tabela.
+3. **"Job dir órfão" do aceite da F2 contradizia a retenção de 14 dias do §11.** Definido em duas
+   classes: dir que nenhuma linha de `correcoes` referencia é órfão e sai no próximo ciclo do janitor;
+   dir referenciado por correção — inclusive `falhou` — fica os 14 dias, porque o transcript da falha
+   é exatamente o que a auditoria precisa. §11, §12 e o aceite da F2 alinhados.
+4. **Gatilho de tamanho não tinha onde guardar o limite** (§10.25 × §5): `skills_map` não tem coluna e
+   nenhuma foi criada. Limiares passam a ser globais em `config` — aprovado > 5 frases ou > 700
+   caracteres, reprovado > 20 frases — calibráveis na F7 como os demais.
+5. **Gatilho de duração anômala não funcionava no dia 1** (§12): p95 sem histórico é ruído. Só entra em
+   vigor com n ≥ 10 correções concluídas da skill; abaixo disso vale o fallback absoluto de 80% do
+   timeout efetivo.
+6. **Skills saíram da árvore do repositório** (§4). Elas mudam quando o enunciado do desafio muda, não
+   quando o sistema muda: ficam em diretório externo apontado por `SKILLS_DIR`, sem cópia, symlink ou
+   submódulo. Verificado que o diretório escolhido já é repositório git próprio. §8 e §9.2 passaram a
+   citar `$SKILLS_DIR` e `$JOBS_DIR` em vez de caminhos literais.
+7. **`modo_avaliacao`: fonte da verdade definida** (§5, §17.6). Confirmado que nenhuma das 49 skills
+   declara modo no frontmatter, e decidido não alterá-las: o `skills_map` é a fonte, e a proteção
+   contra CSV errado continua sendo o §7 — o dossiê relata o modo que a skill exigiu, divergência
+   vira gatilho.
+8. **F0 não entregava runner de testes**, mas o "pnpm test verde" fecha toda fase — a F1 nasceria
+   devendo teste. Vitest entrou nas entregas da F0, junto com aceite explícito de 1 teste real e do
+   selftest dos guards.
+9. **Contagem de skills corrigida de "~50" para 49** onde se referia a skills (F1, §17), preservando
+   "~50 desafios/dia" e "50 clones/dia", que são volume de submissão e não têm relação.
+10. **Miúdos de layout** (§4): `docs/decisions.md` era referência órfã — o papel é do `STATUS.md` mais
+    este apêndice, e foi removida; raiz do repositório passou de `banca/` para `correcao-automatica/`,
+    que é o nome real (o nome-código "Banca" segue no cabeçalho).
+
+Revisão adicional em 07/08/2026 (v1.2), fechando buracos apontados numa análise crítica da base de
+documentação — todos sobre a *estrutura de desenvolvimento*, nenhum sobre a arquitetura do sistema:
+
+1. **Regras duras eram só prosa.** Não havia nada que impedisse um agente de violá-las; dependiam
+   inteiramente de ele ter lido e lembrado. Ganharam guards executáveis em `scripts/hooks/`,
+   registrados como hooks `PreToolUse` no `.claude/settings.json` versionado: prune global de Docker
+   (regra dura 1), force push na main (skill commit-e-push) e segredo em conteúdo staged (regra dura 5)
+   passam a ser **bloqueados**, não desaconselhados. `git commit` e `git push` entram em `permissions.ask`
+   para que nenhum dos dois passe sem confirmação humana, complementando a regra dura 9 (que define
+   *quando* pedir; o `ask` garante que o pedido aconteça).
+2. **`INTEGRATION.md` era citado e não existia** — entrega da F0 pendente. Escrito: premissas A1–A5
+   sobre a plataforma FC, perguntas abertas por tema (listagem de pendentes, postar status+feedback,
+   webhook, autenticação) e o papel do receptor dormante em capturar payload real antes do driver (§3, F9).
+3. **Skills podiam se contradizer sem ninguém perceber** — já havia acontecido entre `implementar-fase`
+   ("commits pequenos ao longo da fase") e `commit-e-push` ("só a pedido"). O CLAUDE.md ganhou regra de
+   manutenção: editar instrução obriga a reler as demais e resolver a contradição antes de commitar.
+4. **O plano não tinha política de envelhecimento.** Definido no cabeçalho: fase implementada faz o
+   código virar referência primária dos detalhes; o plano segue sendo fonte da verdade de arquitetura e
+   intenção, e nada é arquivado — o registro do porquê não expira.
+
+Revisão adicional em 07/08/2026 (v1.1), com o repositório inicial já criado: fixtures E2E redefinidas como zips restaurados em bare repos locais clonados via `file://`, em vez de fork privado — o clone do runner é sem autenticação e o repo do aluno pode sumir (§14); suite do parser passa a cobrir fins de linha CRLF, já que os blocos são colados a partir do Windows (F5). Verificado no repo: estrutura completa, histórico de commits sem rastro de atribuição de IA, e a política de "commit só a pedido" aplicada de forma coerente em CLAUDE.md e nas duas skills.
