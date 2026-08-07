@@ -53,6 +53,31 @@ verifica_staged() {
   fi
 }
 
+# Variante do anterior para conteúdo que não é linha de texto: os bytes vêm do stdin e o nome do
+# arquivo importa (o guard decide por caminho, contra a lista de binários permitidos).
+verifica_staged_bruto() {
+  local esperado="$1" rotulo="$2" nome="$3"
+  local tmp obtido
+  tmp=$(mktemp -d)
+  cat >"$tmp/$nome"
+  git init -q "$tmp"
+  git -C "$tmp" config user.email selftest@local
+  git -C "$tmp" config user.name selftest
+  git -C "$tmp" add "$nome"
+  (cd "$tmp" && CLAUDE_PROJECT_DIR="$tmp" \
+    bash "$raiz/scripts/hooks/bloqueia-segredo-no-commit.sh" \
+    <<<"$(printf 'git commit -m "x"' | jq -R '{tool_input:{command:.}}')" >/dev/null 2>&1)
+  obtido=$?
+  rm -rf "$tmp"
+  total=$((total + 1))
+  if [ "$obtido" -eq "$esperado" ]; then
+    printf '  ok      [%s esperado] %s\n' "$esperado" "$rotulo"
+  else
+    printf '  FALHOU  [esperado %s, obtido %s] %s\n' "$esperado" "$obtido" "$rotulo"
+    falhas=$((falhas + 1))
+  fi
+}
+
 for h in bloqueia-prune-docker.sh bloqueia-force-push-main.sh bloqueia-segredo-no-commit.sh; do
   if [ ! -x "./scripts/hooks/$h" ]; then
     echo "FALHOU: ./scripts/hooks/$h não existe ou não é executável"
@@ -119,6 +144,22 @@ verifica_staged 2 "chave real precedida de ponto" \
   "ANTHROPIC_API_KEY=.$(printf '%s%s' 'sk-' 'ant-escondida999')"  # guard:fixture
 verifica_staged 2 "token real na mesma linha de um grep" \
   "rode \`grep TOKEN .env\` e compare com CLAUDE_CODE_OAUTH_TOKEN=oat01ZzYyXx4321"  # guard:fixture
+
+echo "9. arquivo binário em conteúdo staged — deve BLOQUEAR"
+# Diff de binário não tem linha `+`: sem esta checagem por arquivo, tudo abaixo dela passa em
+# branco. Foi como um `.ts` com byte NUL escapou do scanner.
+# A entrada vem por substituição de processo, não por pipe: pipe roda a função em subshell e os
+# contadores de falha se perderiam — o selftest reportaria OK com verificação vermelha dentro.
+verifica_staged_bruto 2 "imagem com bytes nulos" captura.png \
+  < <(printf 'PNG'; head -c 8 /dev/zero)
+verifica_staged_bruto 2 "byte NUL dentro de .md — extensão não salva" notas.md \
+  < <(printf 'notas'; head -c 4 /dev/zero; printf 'fim\n')
+
+echo "10. texto UTF-8 do repo — deve PASSAR"
+# Acento, seção, emoji de status e caixa aparecem em todo arquivo de fase: se qualquer um deles
+# fosse tratado como binário, o guard bloquearia o repositório inteiro.
+verifica_staged_bruto 0 "markdown com acento, §, emoji e caixa" plano.md \
+  < <(printf '# Plano — §8, §12\n| A1 | correção · devolutiva |\n✅ ⏳ ⬜ ├─ └─\n')
 
 echo
 if [ "$falhas" -eq 0 ]; then
