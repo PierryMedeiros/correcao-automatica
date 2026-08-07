@@ -1,0 +1,26 @@
+# dependências
+node_modules/
+.pnpm-store/
+
+# build
+dist/
+build/
+*.tsbuildinfo
+
+# segredos e ambiente local
+.env
+.env.*
+!.env.example
+
+# artefatos de execução do sistema
+banca-jobs/
+backups/
+*.log
+
+# settings locais do Claude Code (o settings.json do projeto é versionado)
+.claude/settings.local.json
+
+# editores e SO
+.vscode/
+.idea/
+.DS_Store
