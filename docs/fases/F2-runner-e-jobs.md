@@ -1,6 +1,6 @@
 # F2 — Runner e execução de jobs
 
-> **Status:** ⬜ não iniciada
+> **Status:** ⏳ em andamento (iniciada 2026-08-07)
 > **Estimativa:** 3–4 dias úteis (plan §13)
 > **Depende de:** F0 (spikes S1, S2 e S3) · F1 (banco)
 > **Destrava:** F3 (o container onde o agente roda) · F4 (kill, teardown e recuperação de órfãos)
@@ -79,10 +79,15 @@ construção" (§2.4) e "nada destrutivo global" (§2.5) em código executável.
 **Tarefas**
 
 - [ ] `pnpm job-fake --n <N>`: semeia submissões e correções de teste (`modelo = "fake"`), dispara o pipeline F2.3 → F2.6 com `FC_PAYLOAD_CMD` apontando para `payload.sh`. O comando nasce aqui como esqueleto e ganha capacidade a cada etapa que o pipeline avança — o relatório final só fica completo quando a F2.6 existir
-- [ ] Fixture de repo restaurada como bare repo local e clonada por `file://` — mesma escolha dos golden repos (§14, Apêndice B v1.1)
-- [ ] Fixture de compose com `ports: "8080:8080"` e `container_name:` fixo (§10.14, §10.15) mais um serviço que escuta direto na 8080 (§10.13)
+      · **parcial em 2026-08-07**: dispara F2.3 → F2.4 e a carga; falta plugar a coleta (F2.5) e o teardown (F2.6)
+- [x] Fixture de repo restaurada como bare repo local e clonada por `file://` — mesma escolha dos golden repos (§14, Apêndice B v1.1)
+      · nasce em `scripts/job-fake/repo-fixture.ts` e é copiada para dentro do job dir: `/tmp` do host não é visível no runner, então `file://` só resolve a partir de `/workspace`
+- [x] Fixture de compose com `ports: "8080:8080"` e `container_name:` fixo (§10.14, §10.15) mais um serviço que escuta direto na 8080 (§10.13)
+      · o serviço direto na 8080 é o `python3 -m http.server` que o `payload.sh` sobe dentro do runner, fora de qualquer compose — que é exatamente o caso do §10.13
 - [ ] Flags `--dormir <s>` e `--timeout <s>` para provocar o aceite A3, e `--matar-no-meio` (SIGKILL no próprio processo com jobs em voo) para o A4
+      · **parcial**: `--dormir` e `--matar-no-meio` funcionam; `--timeout` é aceito e avisa que quem conta o tempo é a F2.5
 - [ ] Relatório final por job: exit code, presença do dossiê estático e recursos remanescentes (deve ser zero)
+      · **parcial**: as quatro colunas existem; "remanescentes = zero" só passa a valer com o teardown da F2.6, e por isso o harness ainda imprime o comando de remoção por label
 
 **Testes:** nenhum próprio — este harness é quem executa os aceites A1–A5.
 
@@ -96,15 +101,24 @@ construção" (§2.4) e "nada destrutivo global" (§2.5) em código executável.
 
 **Tarefas**
 
-- [ ] Escrever `runner/Dockerfile` sobre `ubuntu:24.04` com versões pinadas: git, curl, jq, `docker-ce-cli` + `docker-compose-plugin`, Node 22 (NodeSource), Go (tarball), PHP 8.3 + Composer, Python 3.12 + pip (§8)
-- [ ] Instalar `@anthropic-ai/claude-code` global com versão fixada no Dockerfile
-- [ ] Criar usuário `corrector` (uid 1000) no grupo `docker` criado com o gid recebido em `ARG DOCKER_GID`; **não** instalar sudo (§11)
-- [ ] `scripts/build-runner.sh`: resolve o gid com `stat -c %g /var/run/docker.sock`, builda com a tag de `RUNNER_IMAGE` e falha alto se a variável não estiver no `.env`
-- [ ] Declarar `ENTRYPOINT` apontando para o script da F2.2 e `WORKDIR /workspace`
+- [x] Escrever `runner/Dockerfile` sobre `ubuntu:24.04` com versões pinadas: git, curl, jq, `docker-ce-cli` + `docker-compose-plugin`, Node 22 (NodeSource), Go (tarball), PHP 8.3 + Composer, Python 3.12 + pip (§8)
+      · Go 1.26.5 com `sha256sum -c` do tarball; PHP 8.3 e Python 3.12 são os do apt do Ubuntu 24.04 (não há PPA a pinar)
+- [x] Instalar `@anthropic-ai/claude-code` global com versão fixada no Dockerfile
+      · `2.1.224`, a mesma que o S1 provou
+- [x] Criar usuário `corrector` (uid 1000) no grupo `docker` criado com o gid recebido em `ARG DOCKER_GID`; **não** instalar sudo (§11)
+- [x] `scripts/build-runner.sh`: resolve o gid com `stat -c %g /var/run/docker.sock`, builda com a tag de `RUNNER_IMAGE` e falha alto se a variável não estiver no `.env`
+      · também exposto como `pnpm build:runner`
+- [x] Declarar `ENTRYPOINT` apontando para o script da F2.2 e `WORKDIR /workspace`
 
 **Testes:** nenhum de unidade — a verificação é o smoke da própria imagem (ver Pronto quando).
 
-**Pronto quando:** `bash scripts/build-runner.sh` sai 0 e `docker run --rm -v /var/run/docker.sock:/var/run/docker.sock $RUNNER_IMAGE bash -lc 'id -un && docker ps -q && claude --version && go version && node -v && php -v && python3 -V'` responde tudo como `corrector`, sem `permission denied` no socket.
+**Pronto quando:** `bash scripts/build-runner.sh` sai 0 e
+`docker run --rm --entrypoint bash -v /var/run/docker.sock:/var/run/docker.sock $RUNNER_IMAGE -lc 'id -un && docker ps -q && claude --version && go version && node -v && php -v && python3 -V'`
+responde tudo como `corrector`, sem `permission denied` no socket.
+
+> `--entrypoint bash` foi acrescentado ao comando em 2026-08-07: com o `ENTRYPOINT` da própria
+> etapa declarado, `docker run <imagem> bash -lc '…'` passa o `bash` como **argumento** do
+> entrypoint, que os ignora e entra no fluxo do job. Sem a flag, o smoke não roda o que diz rodar.
 
 ### F2.2 — Entrypoint: clone, checkout e seam da carga
 
@@ -114,19 +128,36 @@ construção" (§2.4) e "nada destrutivo global" (§2.5) em código executável.
 
 **Tarefas**
 
-- [ ] `set -euo pipefail`; ler `FC_JOB_ID` e os dados de `/workspace/job.json` (repo_url, commit_sha)
-- [ ] Redirecionar stdout/stderr para `/workspace/runner.log` preservando o código de saída (§12)
-- [ ] `git clone` completo com timeout de 120s; em estouro, refazer com `--depth 1` e escrever `/workspace/clone.json` com `{"shallow": true, "motivo": "timeout_120s"}` (§10.17, D7)
-- [ ] `git checkout <commit_sha>`, com código de saída próprio quando o SHA não existe no clone
-- [ ] `git submodule update --init --recursive` tolerante a falha, registrando a falha em `clone.json` (§10.18)
-- [ ] Executar a carga em `FC_PAYLOAD_CMD` (D4); variável ausente = marcador com código próprio e mensagem explícita, sem encerrar o container
-- [ ] Ao fim da carga, escrever `/workspace/resultado.json` com `exit_code`, `finished_at` e o motivo do encerramento — é **este marcador**, e não a saída do container, que sinaliza o fim do job (D10)
-- [ ] **Não encerrar o container** depois do marcador: aguardar o sinal de encerramento do Job Controller (arquivo-sentinela `/workspace/encerrar` ou SIGTERM), para que o `docker exec` + `claude --resume` do §7 tenha runner vivo (F0 D6, D10). Falha do clone também escreve marcador e espera — quem derruba o runner é sempre o host
-- [ ] Escrever `scripts/job-fake/payload.sh`: sobe o compose de exemplo com o comando canônico de `job.json`, faz um `curl` por hostname de serviço, escreve `dossie.json` estático e roda `docker compose -p fc-job-<id> down -v`
+- [x] `set -euo pipefail`; ler `FC_JOB_ID` e os dados de `/workspace/job.json` (repo_url, commit_sha)
+- [x] Redirecionar stdout/stderr para `/workspace/runner.log` preservando o código de saída (§12)
+      · via `tee`, para não cegar o `docker logs` — que é o que se tem à mão quando o job dir ainda não está acessível
+- [x] `git clone` completo com timeout de 120s; em estouro, refazer com `--depth 1` e escrever `/workspace/clone.json` com `{"shallow": true, "motivo": "timeout_120s"}` (§10.17, D7)
+      · `clone.json` passou a ser escrito **sempre**, com `shallow: false` no caminho normal: o gatilho do §10.17 é do backend (F7) e ler um booleano é mais barato que distinguir "arquivo ausente" de "clone que não aconteceu"
+- [x] `git checkout <commit_sha>`, com código de saída próprio quando o SHA não existe no clone
+      · no caminho shallow, tenta antes `fetch --depth 1 origin <sha>`: a ponta rasa pode não conter o SHA pinado, e desistir do job aí seria perder a régua do §9.2
+- [x] `git submodule update --init --recursive` tolerante a falha, registrando a falha em `clone.json` (§10.18)
+- [x] Executar a carga em `FC_PAYLOAD_CMD` (D4); variável ausente = marcador com código próprio e mensagem explícita, sem encerrar o container
+- [x] Ao fim da carga, escrever `/workspace/resultado.json` com `exit_code`, `finished_at` e o motivo do encerramento — é **este marcador**, e não a saída do container, que sinaliza o fim do job (D10)
+      · escrita atômica (`.parcial` + `mv`), para o polling da F2.5 nunca ler JSON pela metade
+- [x] **Não encerrar o container** depois do marcador: aguardar o sinal de encerramento do Job Controller (arquivo-sentinela `/workspace/encerrar` ou SIGTERM), para que o `docker exec` + `claude --resume` do §7 tenha runner vivo (F0 D6, D10). Falha do clone também escreve marcador e espera — quem derruba o runner é sempre o host
+- [x] Escrever `scripts/job-fake/payload.sh`: sobe o compose de exemplo com o comando canônico de `job.json`, faz um `curl` por hostname de serviço, escreve `dossie.json` estático e roda `docker compose -p fc-job-<id> down -v`
+
+**Códigos de saída do runner** (acima de 63 para não colidir com código de carga; vão virar
+`correcoes.erro_resumo` legível na F2.5, sem ninguém parsear log): `64` job.json ausente/inválido ·
+`65` clone falhou nas duas tentativas · `66` `commit_sha` inexistente no clone · `67`
+`FC_PAYLOAD_CMD` ausente · `70` erro inesperado do próprio entrypoint.
 
 **Testes:** `tests/runner-entrypoint.test.ts` (integração, exige Docker) — clone de bare repo local via `file://`, checkout do SHA, fallback shallow forçado por timeout artificial, submodule quebrado tolerado, `resultado.json` escrito com o exit code da carga e container ainda `running` depois dele.
 
-**Pronto quando:** o runner rodando contra um bare repo local deixa `/workspace/repo` no SHA pedido, `runner.log` completo no job dir, `resultado.json` com o exit code da carga e `docker inspect -f '{{.State.Status}}' fc-job-<id>` ainda respondendo `running` até o teardown; com `FC_CLONE_TIMEOUT_S=1` o `clone.json` aparece com `shallow: true`.
+**Pronto quando:** o runner rodando contra um bare repo local deixa `/workspace/repo` no SHA pedido, `runner.log` completo no job dir, `resultado.json` com o exit code da carga e `docker inspect -f '{{.State.Status}}' fc-job-<id>` ainda respondendo `running` até o teardown; com `FC_CLONE_TIMEOUT_S=0` o `clone.json` aparece com `shallow: true`.
+
+> O seam do fallback mudou de `FC_CLONE_TIMEOUT_S=1` para `=0` em 2026-08-07. Com `=1` o teste não
+> era determinístico: o bare repo local clona em milissegundos, então o clone completo termina antes
+> do relógio e o caminho degradado nunca é exercitado. `0` significa "não tente o clone completo" —
+> tratado explicitamente porque o `timeout` do GNU lê 0 como *sem limite* — e não é só recurso de
+> teste: é o botão para o operador forçar o caminho raso num repo sabidamente gigante. O ramo do
+> estouro de relógio de verdade (código 124) continua implementado e coberto pelo caso de clone que
+> falha nas duas tentativas.
 
 ### F2.3 — Job dir e gerador de override noports
 
@@ -136,12 +167,15 @@ construção" (§2.4) e "nada destrutivo global" (§2.5) em código executável.
 
 **Tarefas**
 
-- [ ] `criarJobDir(correcaoId)`: cria `$JOBS_DIR/<id>/` com dono/permissão que o uid 1000 do runner consiga escrever; falha se o dir já existir
-- [ ] Escrever `job.json`: aluno, projeto/fase, `skill_slug`, `repo_url`, `commit_sha`, timeout efetivo, `compose_project = fc-job-<id>` e o comando canônico de compose já montado com `-p` e os dois `-f`
-- [ ] O comando canônico usa o **caminho absoluto do job dir**, não `/workspace` (plan §8, Apêndice B v1.6 item 1). O S3 provou que caminho relativo no compose do aluno resolve contra o diretório do arquivo e vai para o daemon do host: com `-f /workspace/...` o `./dados` do aluno vira `/workspace/dados`, que não existe no host, e o daemon monta um diretório vazio sem erro nenhum
-- [ ] `gerarOverrideNoports(compose)`: função pura que remove `ports:` e `container_name:` de **todos** os serviços e aponta a network default para `fc-job-<id>_net` com `external: true` (§8, §10.14, §10.15)
-- [ ] Tratar compose sem `networks:` declarada, com múltiplas networks e com serviços sem porta — o override nunca inventa serviço nem remove chave alheia
-- [ ] Registrar em `job.json` quais serviços tinham `container_name:` fixo (§10.15 pede o registro; o campo equivalente do dossiê é do agente, F3)
+- [x] `criarJobDir(correcaoId)`: cria `$JOBS_DIR/<id>/` com dono/permissão que o uid 1000 do runner consiga escrever; falha se o dir já existir
+- [x] Escrever `job.json`: aluno, projeto/fase, `skill_slug`, `repo_url`, `commit_sha`, timeout efetivo, `compose_project = fc-job-<id>` e o comando canônico de compose já montado com `-p` e os dois `-f`
+      · o timeout efetivo exigiu antecipar `timeoutEfetivoS()` (`apps/api/src/jobs/timeout.ts`), que a F2.5 lista como tarefa dela — sem ele o `job.json` teria um literal de segundos, que o §10.9 proíbe. A contagem e o kill continuam sendo da F2.5
+- [x] O comando canônico usa o **caminho absoluto do job dir**, não `/workspace` (plan §8, Apêndice B v1.6 item 1). O S3 provou que caminho relativo no compose do aluno resolve contra o diretório do arquivo e vai para o daemon do host: com `-f /workspace/...` o `./dados` do aluno vira `/workspace/dados`, que não existe no host, e o daemon monta um diretório vazio sem erro nenhum
+- [x] `gerarOverrideNoports(compose)`: função pura que remove `ports:` e `container_name:` de **todos** os serviços e aponta a network default para `fc-job-<id>_net` com `external: true` (§8, §10.14, §10.15)
+- [x] Tratar compose sem `networks:` declarada, com múltiplas networks e com serviços sem porta — o override nunca inventa serviço nem remove chave alheia
+      · **divergência**: o override redireciona **todas** as networks do compose do aluno para a network do job, não só a `default`. Compose que separa `frontend`/`backend` criaria networks próprias do projeto, das quais o runner não participa — e o agente perderia o acesso por hostname que o §8 exige. O preço é achatar uma segmentação que o desafio talvez avaliasse; sem isso, a correção não enxerga a stack que ela mesma subiu
+      · nome de serviço e de network são validados contra o formato do Compose antes de entrar no YAML gerado: o nome vem do repo do aluno e é dado externo interpolado em arquivo nosso
+- [x] Registrar em `job.json` quais serviços tinham `container_name:` fixo (§10.15 pede o registro; o campo equivalente do dossiê é do agente, F3)
 
 **Testes:** `override-noports.test.ts` (unidade, §14) — fixture do compose real usado no S3 mais os três formatos acima; override idempotente; resultado sem `ports`/`container_name` e com network externa.
 
@@ -155,14 +189,21 @@ construção" (§2.4) e "nada destrutivo global" (§2.5) em código executável.
 
 **Tarefas**
 
-- [ ] Wrapper de Docker com `execFile` (nunca string de shell: URL de repo e nome de aluno são dado externo), timeout em toda chamada e log com `job_id`
-- [ ] `docker network create fc-job-<id>_net --label fc.job=<id>` **antes** de qualquer container (§8, Apêndice B (06/08) item 1)
-- [ ] `docker create --name fc-job-<id> --label fc.job=<id> --cpus 2 --memory 2.5g` com os mounts do §8 (job dir → `/workspace`; job dir → **o próprio caminho absoluto**; `$SKILLS_DIR/<skill_slug>` → `/workspace/skill:ro`; `$SKILLS_DIR/_shared` → `/workspace/_shared:ro`; `/var/run/docker.sock`) e env `CLAUDE_CODE_OAUTH_TOKEN`, `FC_JOB_ID`
-- [ ] O mount-espelho do job dir no próprio caminho **não é redundância** (Apêndice B v1.6 item 1): é o que faz a resolução de caminho do compose significar a mesma coisa no runner e no daemon do host. Um teste do `job-controller.test.ts` trava os dois mounts — remover o espelho por "limpeza" reintroduz uma falha silenciosa
-- [ ] `docker network connect fc-job-<id>_net fc-job-<id>` e só então `docker start` (D6)
-- [ ] Abortar antes de criar qualquer recurso se `$SKILLS_DIR/<skill_slug>` ou `$SKILLS_DIR/_shared/devolutivas-guide.md` não existir — mount de caminho inexistente cria diretório vazio, e a correção rodaria sem critérios ou sem o guia de devolutivas, falhando em silêncio até a revisão humana (§8)
-- [ ] Jitter aleatório de 5–15s antes do start, com relógio e aleatório injetáveis para o teste (§8)
-- [ ] Nunca logar o valor de `CLAUDE_CODE_OAUTH_TOKEN` (regra dura 5)
+- [x] Wrapper de Docker com `execFile` (nunca string de shell: URL de repo e nome de aluno são dado externo), timeout em toda chamada e log com `job_id`
+- [x] `docker network create fc-job-<id>_net --label fc.job=<id>` **antes** de qualquer container (§8, Apêndice B (06/08) item 1)
+- [x] `docker create --name fc-job-<id> --label fc.job=<id> --cpus 2 --memory 2.5g` com os mounts do §8 (job dir → `/workspace`; job dir → **o próprio caminho absoluto**; `$SKILLS_DIR/<skill_slug>` → `/workspace/skill:ro`; `$SKILLS_DIR/_shared` → `/workspace/_shared:ro`; `/var/run/docker.sock`) e env `CLAUDE_CODE_OAUTH_TOKEN`, `FC_JOB_ID`
+      · o token entra como `-e CLAUDE_CODE_OAUTH_TOKEN`, **sem `=valor`**: o Docker copia do ambiente do processo, e assim o segredo não aparece em `ps` nem em log de comando (§8 escreve `-e CLAUDE_CODE_OAUTH_TOKEN=***`, que é a mesma intenção)
+- [x] O mount-espelho do job dir no próprio caminho **não é redundância** (Apêndice B v1.6 item 1): é o que faz a resolução de caminho do compose significar a mesma coisa no runner e no daemon do host. Um teste do `job-controller.test.ts` trava os dois mounts — remover o espelho por "limpeza" reintroduz uma falha silenciosa
+- [x] `docker network connect fc-job-<id>_net fc-job-<id>` e só então `docker start` (D6)
+- [x] Abortar antes de criar qualquer recurso se `$SKILLS_DIR/<skill_slug>` ou `$SKILLS_DIR/_shared/devolutivas-guide.md` não existir — mount de caminho inexistente cria diretório vazio, e a correção rodaria sem critérios ou sem o guia de devolutivas, falhando em silêncio até a revisão humana (§8)
+      · o teste prova o abort **e** que nenhuma linha de `correcoes` é criada nesse caminho
+- [x] Jitter aleatório de 5–15s antes do start, com relógio e aleatório injetáveis para o teste (§8)
+- [x] Nunca logar o valor de `CLAUDE_CODE_OAUTH_TOKEN` (regra dura 5)
+
+O controller expõe `prepararJob` (correção + job dir, sem tocar em Docker) e `subirRunner`
+(network → create → connect → start) além do `iniciarJob` que compõe os dois. A separação existe
+porque o harness precisa escrever no job dir **entre** os dois passos — e é a mesma costura que a
+F3 usa para pôr o `prompt.txt` lá antes de o runner subir (§9.2 passo 3).
 
 **Testes:** `job-controller.test.ts` (unidade, wrapper Docker mockado) — a ordem das chamadas é network create → create → connect → start; skill ausente aborta antes de criar recurso; o token não aparece em nenhuma linha de log.
 
@@ -178,6 +219,8 @@ construção" (§2.4) e "nada destrutivo global" (§2.5) em código executável.
 
 - [ ] Detectar o fim pelo marcador `/workspace/resultado.json` no job dir (D10) — o runner segue vivo por construção, então **`docker wait` não é o sinal de fim**; observar o arquivo por watcher ou polling curto, tolerando escrita parcial (só vale JSON completo)
 - [ ] Calcular o timeout efetivo como `skills_map.timeout_s ?? config.timeout_job_padrao_s` (§5, §10.9) — nenhum literal de segundos no código; a contagem é do lado do host e vale mesmo se o marcador nunca aparecer
+      · **o cálculo já existe** em `apps/api/src/jobs/timeout.ts` (`timeoutEfetivoS`), antecipado pela F2.3 porque o `job.json` declara o timeout do job. Falta aqui só a **contagem** do lado do host e o kill — usar a função, não reescrevê-la
+- [ ] Trocar a espera provisória do harness (`esperarMarcador` em `scripts/job-fake/run.ts`) pela coleta de verdade desta etapa. Ela nasceu na F2.0 só para o harness ter o que relatar antes da F2.5 existir, e duas implementações do mesmo polling é exatamente o tipo de divergência que ninguém percebe
 - [ ] No estouro: `docker kill` do runner, `correcoes.status = timeout`, `erro_resumo` com a duração e o limite aplicado
 - [ ] Coletar `exit_code` (do marcador), `duracao_s`, `started_at`/`finished_at`, `runner.log`, `clone.json`, `resultado.json` e `dossie.json` (presente? JSON parseável?) — sem validar contra schema (D5)
 - [ ] Persistir `transcript_path` apontando para o caminho canônico do job dir (o arquivo só passa a existir com a invocação do agente, F3)
@@ -311,6 +354,23 @@ Mock só nas fronteiras (Docker CLI, git, relógio, aleatório do jitter); a ló
 - **Risco §15 "Disco"**: o janitor é a mitigação e nasce aqui. Medir o consumo por job já no harness dá o número real para calibrar as retenções.
 - **Socket do Docker no runner é poder total sobre o Docker da máquina** (§11): aceito conscientemente no MVP. Endurecer (socket proxy, egress restrito, rootless) é F8 — não "melhorar um pouquinho" agora.
 
+Descobertos ao implementar (2026-08-07):
+
+- **`set +e` não desliga o trap de `ERR` em bash.** O entrypoint tratava a carga com `set +e`, e uma
+  carga que saísse != 0 — desfecho previsto, o §7 espera o exit code do agente — caía no tratador de
+  erro inesperado e virava marcador `70` em vez do código real. A forma correta é `cmd || codigo=$?`,
+  que suprime errexit **e** trap. Custou um teste vermelho aqui; custaria um diagnóstico longo na F3.
+- **`pnpm test` passou a exigir Docker de pé e a imagem do runner buildada**, além do Postgres que a
+  F1 já exigia: `tests/runner-entrypoint.test.ts` roda contra a imagem de verdade. A falha é
+  acionável (diz para rodar `pnpm build:runner`), mas quem clonar o repo agora tem dois
+  pré-requisitos, não um. Mexer no `runner/entrypoint.sh` **exige rebuildar a imagem** antes de
+  rodar os testes: o script é copiado para dentro dela, não montado.
+- **O override não neutraliza `network_mode: host`.** Um compose de aluno com essa chave põe o
+  container no namespace de rede do **host** — a porta volta a ser publicada de fato, dois jobs
+  paralelos colidem e o isolamento do §2.4 cai, sem `ports:` nenhuma no arquivo. Não é caso do §10 e
+  não foi tratado nesta metade (escopo): está nas observações do STATUS.md para você decidir se vira
+  caso novo do §10 (neutralizar com `!reset`) ou gatilho de revisão.
+
 ## O que NÃO entra nesta fase
 
 - Invocação do `claude -p`, `prompt-template.md`, montagem do `prompt.txt`, `dossie.schema.json`, validação do dossiê e retry corretivo via `--resume` → **F3** (o ponto de extensão fica pronto na F2.5)
@@ -325,17 +385,55 @@ Mock só nas fronteiras (Docker CLI, git, relógio, aleatório do jitter); a ló
 
 ## Impacto em fases seguintes
 
-A preencher no encerramento da fase.
+**Parcial.** A revisão completa é obrigatória no encerramento da fase; a tabela abaixo registra o
+que a primeira metade (F2.0–F2.4) já produziu e já foi propagado.
 
 | O que mudou aqui | Fase afetada | O que foi atualizado lá |
 |---|---|---|
+| O override precisa do compose do aluno, que só existe depois do clone — e quem clona é o entrypoint. O gerador e o job dir estão prontos; a origem do compose no fluxo real, não | F3 | Tarefa nova na F3.3, antes da montagem do comando canônico, com as três saídas possíveis e o custo de cada uma |
+| `timeoutEfetivoS()` (`apps/api/src/jobs/timeout.ts`) nasceu na F2.3 | F2.5 | Tarefa da F2.5 passou a dizer "usar, não reescrever"; o que falta lá é a contagem e o kill |
+| O harness ganhou uma espera provisória pelo marcador | F2.5 | Tarefa nova: trocá-la pela coleta de verdade |
+| `prepararJob`/`subirRunner` separados no Job Controller | F3 | A F3.3 escreve o `prompt.txt` entre os dois passos, sem precisar de mecanismo novo (registrado na F2.4) |
 
 ## Registro de execução
 
-A preencher durante a fase.
+- **Iniciada em:** 2026-08-07
+- **Concluída em:** (em andamento — a primeira metade, F2.0–F2.4, fechou em 2026-08-07)
 
-- **Iniciada em:** AAAA-MM-DD
-- **Concluída em:** AAAA-MM-DD
-- **Decisões tomadas:** (D1–D9, com link para STATUS.md / Apêndice B quando arquitetural; D6 e D8 ainda mudam §8/§12 → Apêndice B; D10 já subiu ao plano em v1.5)
-- **Divergências do plano:** (o que divergiu, por quê, e onde foi registrado)
-- **Evidência dos aceites:** (saída de comando, resultado de teste)
+### Ponto de parada (2026-08-07)
+
+Implementadas **F2.1, F2.2, F2.3 e F2.4 por inteiro**, e a **F2.0 em parte** (o harness alcança o
+pipeline até a subida do runner e a carga). Faltam **F2.5 (acompanhamento, timeout e coleta),
+F2.6 (teardown), F2.7 (janitor) e F2.8 (recuperação de órfãos)**, e com elas os aceites A1, A3, A4
+e A5 — que dependem de coletar desfecho e derrubar recurso.
+
+Consequência operacional enquanto a F2.6 não existe: **o runner fica de pé depois da carga, por
+construção** (§8, D10). O `pnpm job-fake` termina imprimindo os nomes exatos do container e da
+network que criou, para remoção por nome/label — nunca prune (regra dura 1).
+
+### Decisões tomadas
+
+D1, D2, D4, D6 e D7 adotadas conforme a recomendação do arquivo da fase, confirmadas com o usuário
+antes de qualquer código. D3, D5, D8 e D9 pertencem às etapas da segunda metade e seguem abertas.
+Nenhuma delas mudou arquitetura, então **não houve entrada no Apêndice B** — D6 virou mecanismo
+implementado (`prepararJob`/`subirRunner`) e o §8 já descreve a ordem que ela materializa.
+
+### Divergências do plano e do próprio arquivo da fase
+
+| O que divergiu | Por quê | Onde está registrado |
+|---|---|---|
+| Smoke da F2.1 ganhou `--entrypoint bash` | com `ENTRYPOINT` declarado, `docker run <img> bash -lc` passa o bash como argumento e o smoke não roda o que diz rodar | "Pronto quando" da F2.1 |
+| Seam do fallback shallow virou `FC_CLONE_TIMEOUT_S=0` (era `=1`) | bare repo local clona em milissegundos: com `=1` o caminho degradado nunca seria exercitado, e o teste passaria sem testar | "Pronto quando" da F2.2 |
+| `clone.json` é escrito sempre, não só no caminho degradado | o gatilho do §10.17 é do backend (F7): ler `shallow: false` é mais barato que distinguir arquivo ausente de clone que não ocorreu | tarefa da F2.2 |
+| Override redireciona **todas** as networks do aluno, não só a `default` | compose com `frontend`/`backend` criaria networks do projeto das quais o runner não participa, e o agente perderia o acesso por hostname que o §8 exige | tarefa da F2.3 |
+| Token entra como `-e CLAUDE_CODE_OAUTH_TOKEN`, sem `=valor` | o Docker copia do ambiente do processo; o valor deixa de existir em `ps` e em log de comando. Mesma intenção do `-e …=***` do §8, com superfície menor | tarefa da F2.4 |
+| `timeoutEfetivoS()` nasceu na F2.3, não na F2.5 | o `job.json` declara o timeout do job, e a alternativa era um literal de segundos que o §10.9 proíbe | tarefas da F2.3 e da F2.5 |
+
+### Evidência (primeira metade)
+
+- **F2.1** — `bash scripts/build-runner.sh` sai 0; smoke responde `uid=1000(corrector) … groups=…,989(dockerhost)`, `docker ps` funciona sem `permission denied`, `claude 2.1.224`, `go1.26.5`, `node v22.23.2`, `PHP 8.3.6`, `Python 3.12.3`, `Composer 2.10.2`, `compose 5.4.0`.
+- **F2.2** — `tests/runner-entrypoint.test.ts`, 6 testes verdes em 4,3s: checkout no SHA pinado com o container ainda `running` depois da carga e saindo pela sentinela; `clone.json` com `shallow: true` sob `FC_CLONE_TIMEOUT_S=0`; submodule quebrado tolerado com `submodules.ok = false`; clone impossível → marcador 65 com runner vivo; SHA inexistente → 66; sem `FC_PAYLOAD_CMD` → 67.
+- **F2.3** — `override-noports.test.ts`, 15 testes verdes. Com Docker real: `docker compose -p fc-job-999 -f <base do S3> -f <override gerado> config` sai 0, o resolvido não tem **nenhum** `ports:`/`container_name:` e a `default` sai como `name: fc-job-999_net, external: true`.
+- **F2.4** — `job-controller.test.ts`, 13 testes verdes (ordem `network create → create → connect → jitter → start`, os dois mounts do job dir, `:ro` de skill e `_shared`, abort sem criar recurso, token fora de log e de argv, correção `rodando` antes do Docker, timeout efetivo no `job.json`). Com job real: `docker inspect fc-job-1` mostra `["bridge","fc-job-1_net"]`, `fc.job=1`, `NanoCpus 2000000000`, `Memory 2684354560`, os cinco mounts com `rw=false` na skill e no `_shared`, e `PORTS=[]`.
+- **F2.0 (parcial)** — `pnpm job-fake --n 1` fecha com `exit_code 0`, `motivo carga_concluida` e dossiê escrito. `pnpm job-fake --n 4`, com o mesmo compose de portas fixas nos quatro: os quatro saem 0, cada um responde o **próprio** marcador em `localhost:8080` (§10.13) e em `http://app:8080` (§10.14), nenhum container `desafio-app`/`desafio-db` existe (§10.15), zero porta publicada e os 8 recursos criados aparecem nos filtros de `label=fc.job` (regra dura 2). É a substância do **A2**, faltando a parte de teardown que a F2.6 fecha.
+- **Repositório** — `pnpm lint`, `pnpm typecheck`, `pnpm test` (286 testes, 13 arquivos) e `pnpm guards` (31 verificações) verdes.

@@ -1,0 +1,31 @@
+# Compose SINTÉTICO do job fake: o pior caso que o override do §8 precisa neutralizar.
+#
+#   - `ports:` publicadas em todos os serviços  -> §10.14
+#   - `container_name:` fixo em todos           -> §10.15
+#
+# É deliberado que os quatro jobs paralelos do aceite A2 usem ESTE arquivo: sem o override, o
+# segundo `up` morreria com "address already in use" e "container name already in use". Que os
+# quatro subam é a prova de que o override funciona.
+#
+# Compose de aluno real só entra com os golden repos (§17.2), na F3 e na F7.
+services:
+  app:
+    image: busybox:1.36
+    container_name: desafio-app
+    ports:
+      - '8080:8080'
+    # `$FC_MARCADOR` é interpolado pelo Compose, no runner, a partir do ambiente do payload: é o
+    # que faz cada job responder o PRÓPRIO marcador e torna o aceite A2 verificável.
+    command:
+      [
+        'sh',
+        '-c',
+        'mkdir -p /www && printf "%s\n" "$FC_MARCADOR-via-compose" > /www/index.html && httpd -f -p 8080 -h /www',
+      ]
+
+  db:
+    image: busybox:1.36
+    container_name: desafio-db
+    ports:
+      - '5432:5432'
+    command: sh -c "sleep 3600"

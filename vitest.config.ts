@@ -23,11 +23,16 @@ export default defineConfig({
       {
         // A raiz do projeto é `apps/api` porque é lá que moram `pg`, `prisma` e o client gerado —
         // o pnpm não hasteia dependência de pacote do workspace para a raiz do monorepo.
+        //
+        // Teste que mora em `apps/api` roda aqui, inclusive o que fica ao lado do código em
+        // `src/**`: a regra é por pacote, não por natureza do teste. Um teste puro pagar o
+        // `TRUNCATE` do harness custa milissegundos; um teste de banco cair no projeto errado
+        // custa uma fixture apagada no meio da asserção, que foi o bug intermitente da F1.
         root: 'apps/api',
         test: {
           name: 'db',
           environment: 'node',
-          include: ['tests/**/*.test.ts'],
+          include: ['tests/**/*.test.ts', 'src/**/*.test.ts'],
           globalSetup: ['tests/setup-db.ts'],
           setupFiles: ['tests/limpeza.ts'],
         },

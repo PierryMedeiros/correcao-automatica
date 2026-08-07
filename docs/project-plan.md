@@ -425,7 +425,7 @@ O seed **recusa a linha inteira** quando falta `projeto`, `fase`, `skill_slug` o
 
 **Plano executável:** [`docs/fases/F1-banco-e-dominio-concluida.md`](fases/F1-banco-e-dominio-concluida.md)
 
-### F2 — Runner e execução de jobs (3–4d) ⬜ não iniciada
+### F2 — Runner e execução de jobs (3–4d) ⏳ em andamento (iniciada 2026-08-07)
 
 O ambiente onde uma correção acontece: imagem do runner (§8), Job Controller com job dir e coleta de artefatos, gerador de override noports, network por job, teardown em camadas, janitor, recuperação de órfãos no boot e jitter. Validada com job fake, sem LLM — o agente entra só na F3.
 

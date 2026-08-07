@@ -1,8 +1,16 @@
 # STATUS
 
-Atualizado em: 07/08/2026 (America/Sao_Paulo) — **F1 concluída**: o banco conhece o domínio inteiro do §5, com as 9 tabelas, os índices parciais, o seed do `skills_map` e os defaults de `config`
+Atualizado em: 07/08/2026 (America/Sao_Paulo) — **F2 na metade**: o sistema sobe um runner isolado, com a skill montada, clona o repo no SHA pinado, executa a carga e escreve o dossiê. Falta o outro lado: colher, derrubar e limpar
 
 ## Feito
+
+- **F2 — Runner e execução de jobs ⏳ em andamento (iniciada 07/08/2026).** Implementadas **F2.1, F2.2, F2.3 e F2.4 inteiras** e a **F2.0 em parte**; pendentes F2.5–F2.8. Evidência completa no arquivo da fase:
+  - **Imagem `banca-runner:dev`** (`runner/Dockerfile`, `pnpm build:runner`): Ubuntu 24.04 com Go 1.26.5 (tarball com sha256 conferido), Node 22, PHP 8.3 + Composer, Python 3.12, Docker CLI + compose e `claude` 2.1.224 — a mesma versão que o S1 provou. Roda como `corrector` (uid 1000) no grupo do gid do socket, sem sudo
+  - **Entrypoint** (`runner/entrypoint.sh`): clone com timeout, fallback shallow com `clone.json`, checkout do SHA (com `fetch --depth 1` do objeto avulso quando a ponta rasa não o traz), submodule tolerado, seam `FC_PAYLOAD_CMD` e `resultado.json` escrito atomicamente. **O container permanece vivo** até a sentinela ou o SIGTERM — é o que torna o retry corretivo do §7 possível
+  - **Job dir e override** (`apps/api/src/jobs/`): `job.json` com o comando canônico de compose em **caminho absoluto**, e o gerador puro que apaga `ports:`/`container_name:` com `!reset` e prende **todas** as networks do aluno na network do job
+  - **Job Controller**: ordem `network create → create → connect → start` travada por teste, os **dois** mounts do job dir, skill e `_shared` `:ro`, `--cpus 2 --memory 2.5g`, jitter injetável e abort **antes de criar recurso** quando a skill ou o guia de devolutivas não existem
+  - **`pnpm job-fake --n 4`**: quatro jobs paralelos com o mesmo compose de portas fixas, todos saindo 0, cada um respondendo o **próprio** marcador em `localhost:8080` e em `http://app:8080`, zero porta publicada no host, nenhum `container_name` fixo sobrevivente e todo recurso com label `fc.job=<id>`
+  - **34 testes novos** (6 de integração com Docker, 28 de unidade); `pnpm test` fecha com **286**, e `lint`, `typecheck` e `guards` verdes
 
 - **F1 — Banco e domínio ✅ implementada em 07/08/2026.** As sete etapas fecharam com os nove aceites executados de verdade (evidência no arquivo da fase):
   - `packages/shared` (`@banca/shared`) — os sete enums do §5/§6, `STATUS_TERMINAIS` e `estaAtiva()` em `src/dominio/estados.ts`, o **módulo titular** que a F4 amplia com a tabela de transições; e o parser RFC 4180 em `src/csv/rfc4180.ts`
@@ -34,15 +42,27 @@ Atualizado em: 07/08/2026 (America/Sao_Paulo) — **F1 concluída**: o banco con
 
 ## Em andamento
 
-- Nada em andamento. A F1 fechou; a F2 ainda não começou.
+- **F2, na metade exata.** O que existe: harness de job fake (parcial), imagem, entrypoint, job dir + override e subida do runner. O que falta: **F2.5** acompanhamento/timeout/coleta, **F2.6** teardown em camadas, **F2.7** janitor, **F2.8** recuperação de órfãos no boot. Os aceites A2 e A6 já têm substância; A1, A3, A4 e A5 dependem das quatro etapas que faltam
+- **Enquanto a F2.6 não existe, runner não morre sozinho** — é o desenho (§8, D10), não um bug. O `pnpm job-fake` termina imprimindo os nomes exatos do container e da network para remover à mão, por nome/label, nunca prune
+- **O banco de dev ficou com 5 correções fake em `rodando` e 5 job dirs em `$JOBS_DIR` (ids 1–5).** Containers e networks já foram removidos por nome. Deixados de propósito: é exatamente o estado que a F2.8 tem que reconhecer como órfão no boot e a F2.7 tem que classificar como job dir **referenciado** (§11) — fixture pronta, não sujeira esquecida
 
 ## Próximo passo
 
-- **F2 — Runner e execução de jobs.** Depende de F0 e F1, ambas ✅. Antes de abrir, conferir as pré-condições do arquivo da fase — em especial `$SKILLS_DIR` com o `_shared/devolutivas-guide.md`, o gid do socket do Docker e ≥ 15 GB livres. A F2 ganhou duas pré-condições novas vindas desta fase (harness de teste de banco e onde mora o Prisma Client)
-- **Nada foi commitado ainda.** O `git status` acumula a F0 inteira, o levantamento do `skills_map` e agora a F1. Vale quebrar em commits por etapa antes de abrir a F2, para o diff da fase nova não vir misturado
-- Pendências humanas restantes (plan §17): golden repos G1–G10 (§17.2, destrava F3 e F7), `.wslconfig` com `processors=6` e suspensão desativada (§17.4), PrimeVue e o nome "Banca" do §17.5 (só pesam na F6). Resolvidas: §17.1 (skills-map completo), §17.3 (token) e a parte do §17.5 que a F1 exigia (NestJS+Prisma)
+- **Retomar a F2 pela F2.5** (acompanhamento, timeout e coleta). Ela já tem duas tarefas ajustadas pela primeira metade: usar `timeoutEfetivoS()`, que já existe, e trocar a espera provisória do harness pela coleta de verdade. Depois: F2.6, F2.7, F2.8, revisão de impacto e encerramento
+- **A costura F2/F3 do override está aberta e registrada na F3.3**: o gerador está pronto, mas num job real o compose do aluno só existe depois do clone, que roda dentro do runner. Decidir entre as três saídas antes de montar o `prompt.txt` — se a escolha for o handshake, o plano muda primeiro
+- A F0 e a F1 já estão no histórico (`cee116c`, `b358985`); esta metade da F2 entrou em um commit só, a pedido
+- Pendências humanas restantes (plan §17): golden repos G1–G10 (§17.2, destrava F3 e F7), `.wslconfig` com `processors=6` e suspensão desativada (§17.4 — `nproc` já devolve 12, a suspensão continua sendo checagem sua), PrimeVue e o nome "Banca" do §17.5 (só pesam na F6). Resolvidas: §17.1 (skills-map completo), §17.3 (token) e a parte do §17.5 que a F1 exigia (NestJS+Prisma)
 
 ## Decisões recentes
+
+- 07/08/2026: **as cinco decisões da F2 que pesavam nesta metade foram tomadas conforme a recomendação do arquivo da fase** — D1 (`<id>` = `correcoes.id`, com a linha nascendo em `rodando` antes do Docker), D2 (`apps/api/src/jobs/` em TS puro, sem Nest), D4 (seam `FC_PAYLOAD_CMD`), D6 (`create → connect → start`) e D7 (`clone.json`). D3, D5, D8 e D9 são das etapas que faltam. Nenhuma mexeu em arquitetura, então **não houve entrada no Apêndice B**
+- 07/08/2026: **o id da correção sai da sequência antes do insert** (`nextval(pg_get_serial_sequence(...))`). O `transcript_path` é NOT NULL e depende do id para existir; a alternativa era gravar um valor falso e corrigir depois, deixando uma janela em que a linha mente sobre onde está o transcript
+- 07/08/2026: **o token vai para o runner como `-e CLAUDE_CODE_OAUTH_TOKEN`, sem `=valor`** — o Docker copia do ambiente do processo. Mesma intenção do `-e …=***` do §8, com o valor deixando de existir em `ps` e em qualquer log de comando. Nenhuma variável nossa chega a segurar o segredo
+- 07/08/2026: **o override redireciona todas as networks do compose do aluno**, não só a `default` (§8 fala em "a network default"). Compose que separa `frontend`/`backend` criaria networks do projeto das quais o runner não participa, e o agente perderia o acesso por hostname — que é a única via de acesso que o §8 permite. O preço é achatar a segmentação do desafio; registrado como divergência no arquivo da fase
+- 07/08/2026: **`clone.json` é escrito sempre**, com `shallow: false` no caminho normal. O gatilho do §10.17 é do backend (F7) e ler um booleano é mais barato que distinguir "arquivo ausente" de "clone que não aconteceu"
+- 07/08/2026: **o seam do fallback shallow é `FC_CLONE_TIMEOUT_S=0`**, e não `=1` como o arquivo da fase previa: bare repo local clona em milissegundos e o teste com `=1` passaria sem exercitar o caminho degradado. `0` significa "não tente o clone completo" — e é também o botão do operador para um repo sabidamente gigante
+- 07/08/2026: **teste que mora em `apps/api` roda no projeto `db` do vitest**, inclusive o que fica ao lado do código em `src/**`. A regra é por pacote, não por natureza do teste: teste puro pagar um `TRUNCATE` custa milissegundos, teste de banco no projeto errado custa a fixture apagada no meio da asserção — que foi o bug intermitente da F1
+- 07/08/2026: **`yaml` e `pino` entraram como dependências de `apps/api`**. O `yaml` porque o override precisa entender compose de aluno de verdade (âncoras, listas, mapas) antes de reescrevê-lo, e o `pino` porque o §12 já o pedia e um logger de mentira agora seria reescrito na F2.5
 
 - 07/08/2026: **Prisma 7.9.1** (a versão corrente), que muda três coisas em relação ao que o plano supunha: a URL do datasource sai do `schema.prisma` e vai para `prisma.config.ts`; **driver adapter é obrigatório** (`@prisma/adapter-pg` + `pg`), então ninguém instancia `PrismaClient` direto — a fábrica é `criarPrisma(url)` em `apps/api/src/db/client.ts`; e o client é gerado como TypeScript em `apps/api/generated/`, gitignored e fora de lint/prettier/tsc. `postinstall` da raiz roda `prisma generate`, então clone novo + `pnpm install` já tem client
 - 07/08/2026: **o `.env` continua único, na raiz, e quem o carrega é `apps/api/src/env.ts`**, ancorado no caminho do módulo e não no cwd — `pnpm --filter` roda com cwd em `apps/api` e o vitest roda na raiz. `DATABASE_URL_TEST` (`banca_test`) é variável nova
@@ -93,6 +113,15 @@ Cinco buracos que a quebra em fases expôs — todos existiam no plano e nenhum 
 - ✅ **O `run` nunca saía de `ativo`.** Com o §10.21 recusando o segundo run, o sistema aceitaria exatamente um run na vida. **No plano (§5 e §6.1, novo):** `finalizado` automático quando todo o lote atinge terminal de fato; `pausar`, `retomar` e `cancelar` humanos. Não existe ação humana de finalizar — encerrar com pendência é cancelar, e o nome tem que dizer a verdade.
 - **A validação do repositório não tinha dono.** `git ls-remote`, comparação com `base_repo_url`, pin do `commit_sha` e resolução da skill (§9.2 passo 1) caíam entre a F4 e a F5. Sem isso, submissão criada em `recebida` nunca sairia de lá. Atribuída à F5, com as transições vindo da F4. Não mexe no plano: o §9.2 já descreve o passo, só não dizia de quem era.
 - **`LlmExecutor` não nascia em lugar nenhum.** É uma das três fronteiras de inversão que o CLAUDE.md autoriza, é premissa da F8 ("trocar CLI por API key é trocar variável de ambiente") e nenhuma fase a entregava. Passou a ser entrega da F3. Também não mexe no plano — o §4 e o CLAUDE.md já a previam.
+
+Achados da primeira metade da F2 (07/08/2026), do mais consequente para o menos:
+
+- **A costura F2/F3 do override ficou exposta, e ela é real.** O plano diz que o Job Controller escreve o override antes do `docker run` (§9.2 passo 3) e que quem clona é o entrypoint (passo 4). As duas coisas não cabem juntas num repo de verdade: o override precisa dos nomes dos serviços, que estão num arquivo que ainda não foi clonado. Não bloqueou a F2 — o job fake entrega o compose pelo host — e o gerador está pronto e testado. **Está registrado como tarefa da F3.3**, com as três saídas e o custo de cada uma; se a escolha for o handshake (entrypoint espera o override), o §8/§9.2 mudam **antes** do código.
+- **`network_mode: host` no compose do aluno fura o isolamento e o override não o neutraliza.** O container entra no namespace de rede do host: a porta volta a ser publicada de fato, dois jobs paralelos colidem e o §2.4 cai — sem uma linha `ports:` no arquivo. Não é caso do §10 e não foi tratado (escopo). É decisão sua: vira caso novo do §10 neutralizado por `!reset`, ou vira gatilho de revisão. Vale lembrar que o socket do host já dá ao agente poder equivalente (§11), então isto é sobre correção acidental, não sobre ataque.
+- **`pnpm test` agora exige Docker de pé e a imagem buildada**, além do Postgres da F1. `tests/runner-entrypoint.test.ts` roda contra a imagem de verdade, e a mensagem de falha diz para rodar `pnpm build:runner`. Consequência prática: **mexeu em `runner/entrypoint.sh`, rebuilde antes de testar** — o script é copiado para dentro da imagem, não montado.
+- **`set +e` não desliga o trap de `ERR` em bash.** Uma carga que sai com código != 0 — desfecho previsto, o §7 espera o exit code do agente — virava marcador `70` "erro inesperado" em vez do código real. O teste pegou; a forma correta é `cmd || codigo=$?`. Registrado nos riscos da fase porque a F3 vai escrever mais shell.
+- **O `compose` de dentro do runner é mais novo que o do host** (5.4.0 contra 5.0.0). Quem sobe as stacks é o de dentro, então é a versão dele que importa para o `!reset`; ambas estão muito acima do 2.24 exigido. Só não suponha que são a mesma na hora de diagnosticar.
+- **Sem os golden repos, o compose exercitado é sintético.** O gerador de override foi provado contra o compose do S3 e contra a fixture do job fake, os dois escritos por nós como pior caso. Compose de aluno real só entra com a §17.2 — e é lá que aparecem `depends_on` com `condition`, `profiles`, `extends` e outras formas que ninguém previu.
 
 Achados da F1, com o que já foi feito com cada um:
 

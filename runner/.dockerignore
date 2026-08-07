@@ -1,0 +1,5 @@
+# O contexto de build do runner é só o que a imagem copia. Tudo o mais que caia aqui — anotação,
+# arquivo de teste, `.env` — só engorda o contexto e arrisca entrar na imagem por descuido.
+*
+!Dockerfile
+!entrypoint.sh

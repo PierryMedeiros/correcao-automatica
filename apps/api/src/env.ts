@@ -30,3 +30,28 @@ export function databaseUrlOpcional(): string | undefined {
 export function databaseUrlTest(): string {
   return exigir('DATABASE_URL_TEST');
 }
+
+/** Diretório das skills `corrige-*`, fora da árvore do repo (§4). Montado `:ro` no runner (§8). */
+export function skillsDir(): string {
+  return exigir('SKILLS_DIR');
+}
+
+/** Raiz dos job dirs (§8, §11): um subdiretório por `correcoes.id`. */
+export function jobsDir(): string {
+  return exigir('JOBS_DIR');
+}
+
+export function runnerImage(): string {
+  return exigir('RUNNER_IMAGE');
+}
+
+/**
+ * Só confirma a presença do token — nunca devolve o valor.
+ *
+ * O runner o recebe por `-e CLAUDE_CODE_OAUTH_TOKEN` sem `=valor`, que faz o Docker copiá-lo do
+ * ambiente do processo: assim o segredo não passa pela linha de comando (onde qualquer `ps` o
+ * leria) nem por variável nossa que pudesse acabar em log (regra dura 5).
+ */
+export function tokenClaudePresente(): boolean {
+  return (process.env['CLAUDE_CODE_OAUTH_TOKEN']?.trim().length ?? 0) > 0;
+}
