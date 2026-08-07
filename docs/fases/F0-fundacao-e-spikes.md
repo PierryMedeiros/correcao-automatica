@@ -20,7 +20,7 @@ pré-criada. Depois desta fase, F1–F3 começam sobre fatos verificados, não s
 - [x] pnpm 11.7.0 via corepack — `pnpm -v` retorna `11.7.0` (pinado em `packageManager`)
 - [x] Docker Engine responde sem sudo — `docker info` sai 0
 - [ ] Sessão do Claude Code reiniciada depois dos hooks entrarem em `.claude/settings.json` — `/hooks` lista os três `PreToolUse` e `pnpm guards` sai 0 (os spikes mexem em Docker, que é o que o guard 1 protege)
-- [ ] `.env` existe com o token preenchido — `awk -F= '/^CLAUDE_CODE_OAUTH_TOKEN/ && length($2) > 0 {ok=1} END {exit !ok}' .env` sai 0, sem imprimir o valor em nenhum momento. **Destrava só o S1** (§17.3); se estiver vazio, pare e peça ao usuário rodar `claude setup-token` no host — não improvise substituto
+- [ ] `.env` existe com o token preenchido — `grep -q '^CLAUDE_CODE_OAUTH_TOKEN=.\+' .env` sai 0, sem nunca imprimir o valor. **Destrava só o S1** (§17.3); se estiver vazio, pare e peça ao usuário rodar `claude setup-token` no host — não improvise substituto
 - [ ] `docker compose version` ≥ 2.24 — habilita as tags `!reset`/`!override` do caminho principal do S3; abaixo disso vale o plano B da F0.6
 - [ ] `$JOBS_DIR` do `.env` existe e é gravável — `mkdir -p "$JOBS_DIR" && test -w "$JOBS_DIR"` (S1 e S3 escrevem lá)
 
