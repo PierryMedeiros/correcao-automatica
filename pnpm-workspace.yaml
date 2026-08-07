@@ -5,5 +5,16 @@ packages:
 # O pnpm 11 exige decisão explícita sobre quem pode rodar script de instalação.
 # esbuild é dependência do vitest e o script é o que linka o binário da plataforma —
 # sem ele o test runner não sobe. Toda entrada nova aqui é decisão consciente, não default.
+#
+# prisma e @prisma/engines: o script de instalação é o que baixa o query engine da plataforma.
+# Sem ele, `prisma migrate` e o client não funcionam — não há CLI de banco.
 allowBuilds:
+  '@prisma/engines': true
   esbuild: true
+  prisma: true
+
+# O pnpm segura pacote publicado há poucos dias. O tsx publica quase diariamente e o vite já o
+# resolve como peer opcional, então qualquer versão corrente cairia aqui — a linha é escrita pelo
+# próprio pnpm ao instalar. Entrada nesta lista é dispensa consciente do prazo de quarentena.
+minimumReleaseAgeExclude:
+  - tsx@4.23.11

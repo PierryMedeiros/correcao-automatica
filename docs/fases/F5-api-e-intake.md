@@ -82,7 +82,7 @@ SSE. Nada disso tem tela ainda (F6) — é tudo REST verificável por `curl`.
 
 **Tarefas**
 
-- [ ] Normalizar fins de linha `\r\n` e `\r` para `\n` antes de qualquer coisa (blocos vêm do Windows, Apêndice B v1.1)
+- [ ] Normalizar fins de linha `\r\n` e `\r` para `\n` antes de qualquer coisa (blocos vêm do Windows, Apêndice B v1.1) — `linhasDoCsv` de `packages/shared/src/csv/rfc4180.ts` (F1) já faz isso e mais o BOM; reusar ou extrair, nunca reescrever a terceira cópia
 - [ ] Separar blocos: uma nova ocorrência de `Projeto:` abre bloco novo (§9.1)
 - [ ] Reconhecer os rótulos do §9.1 com os aliases `Fase do projeto:`/`Fase:` e `E-mail:`/`Email:`, aplicando a normalização de **D3**; só o primeiro `:` da linha separa rótulo de valor
 - [ ] Descartar `Celular:` no parser: o tipo `BlocoParseado` **não declara** campo de celular (regra dura 6, §11)

@@ -7,6 +7,10 @@ dist/
 build/
 *.tsbuildinfo
 
+# client do Prisma: código gerado a partir de apps/api/prisma/schema.prisma.
+# Nasce com `pnpm db:generate` (que `pnpm db:migrate` já encadeia).
+apps/api/generated/
+
 # segredos e ambiente local
 .env
 .env.*

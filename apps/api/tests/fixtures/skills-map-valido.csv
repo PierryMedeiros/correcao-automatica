@@ -1,0 +1,5 @@
+projeto,fase,skill_slug,modo_avaliacao,base_repo_url,timeout_s
+GoLang,Client-Server-API,corrige-client-server-api,execucao,https://github.com/fc/base-cs-api,
+GoLang,Multithreading,corrige-multithreading,execucao,,1800
+Desafios MBA Arquitetura,"Do compose ao cluster: Docker, Kubernetes e Terraform",corrige-compose-cluster,estatica,,
+MBA,Observabilidade,corrige-observabilidade,estatica,,

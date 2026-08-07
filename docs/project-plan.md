@@ -413,7 +413,7 @@ S1 é o risco nº 1 do projeto: se travar, tudo para até resolver. O runner de 
 
 **Plano executável:** [`docs/fases/F0-fundacao-e-spikes-concluida.md`](fases/F0-fundacao-e-spikes-concluida.md)
 
-### F1 — Banco e domínio (1–2d) ⬜ não iniciada
+### F1 — Banco e domínio (1–2d) ✅ implementada em 2026-08-07
 
 O modelo de dados do §5 vira schema Prisma, migrations e seed: `pg_trgm`, índice único parcial de submissão ativa, `skills_map` carregado de `docs/skills-map.csv` e `config` com os defaults dos limiares do §12.
 
@@ -423,7 +423,7 @@ O seed **recusa a linha inteira** quando falta `projeto`, `fase`, `skill_slug` o
 
 **Ação humana que destrava:** §17.5 (decisões reversíveis confirmadas)
 
-**Plano executável:** [`docs/fases/F1-banco-e-dominio.md`](fases/F1-banco-e-dominio.md)
+**Plano executável:** [`docs/fases/F1-banco-e-dominio-concluida.md`](fases/F1-banco-e-dominio-concluida.md)
 
 ### F2 — Runner e execução de jobs (3–4d) ⬜ não iniciada
 

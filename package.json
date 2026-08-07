@@ -8,6 +8,10 @@
     "node": ">=24"
   },
   "scripts": {
+    "postinstall": "pnpm --filter @banca/api run db:generate",
+    "db:generate": "pnpm --filter @banca/api run db:generate",
+    "db:migrate": "pnpm --filter @banca/api run db:migrate",
+    "db:seed": "pnpm --filter @banca/api run db:seed",
     "lint": "eslint . && prettier --check .",
     "format": "prettier --write .",
     "typecheck": "tsc --noEmit",
@@ -16,6 +20,7 @@
     "guards": "bash scripts/hooks/selftest.sh"
   },
   "devDependencies": {
+    "@banca/shared": "workspace:*",
     "@eslint/js": "^9.39.0",
     "@types/node": "^26.1.2",
     "eslint": "^9.39.0",

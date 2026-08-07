@@ -1,9 +1,16 @@
 # STATUS
 
-Atualizado em: 07/08/2026 (America/Sao_Paulo) — **F0 concluída**, `skills-map.csv` fechado e a F1 destravada, com as dez decisões dela já tomadas
+Atualizado em: 07/08/2026 (America/Sao_Paulo) — **F1 concluída**: o banco conhece o domínio inteiro do §5, com as 9 tabelas, os índices parciais, o seed do `skills_map` e os defaults de `config`
 
 ## Feito
 
+- **F1 — Banco e domínio ✅ implementada em 07/08/2026.** As sete etapas fecharam com os nove aceites executados de verdade (evidência no arquivo da fase):
+  - `packages/shared` (`@banca/shared`) — os sete enums do §5/§6, `STATUS_TERMINAIS` e `estaAtiva()` em `src/dominio/estados.ts`, o **módulo titular** que a F4 amplia com a tabela de transições; e o parser RFC 4180 em `src/csv/rfc4180.ts`
+  - `apps/api` como pacote de dados (sem Nest, D2): **Prisma 7** com `prisma.config.ts`, driver adapter `pg`, e 5 migrations que sobem as 9 tabelas do §5 do zero
+  - **Os dois índices únicos parciais**, em SQL cru dentro da migration: submissão ativa por `(lower(aluno_email), projeto, fase)` com o predicado escrito **por complemento** (`NOT IN` dos três terminais), e no máximo 1 run `ativo` (§10.21). A matriz dos 12 estados calcula o desfecho esperado chamando `estaAtiva()` — o SQL e o TypeScript não têm como divergir sem quebrar o build
+  - `pnpm db:seed` carrega as **48** linhas do CSV, é idempotente, desativa (nunca deleta) o que sumiu e **recusa o arquivo inteiro antes de escrever qualquer linha**, listando todos os problemas com número da linha e nome do campo
+  - `config` com as 15 chaves do §10/§11/§12, cada uma com a seção de origem na `descricao`; seed não destrutivo (valor calibrado na F7 não é revertido por um reseed). `pg_trgm` instalada por migration
+  - **252 testes** em 10 arquivos, `pnpm lint`, `pnpm typecheck` e `pnpm guards` verdes
 - **F0 — Fundação e spikes ✅ implementada em 07/08/2026.** Os três riscos técnicos do §15 estão provados em bancada, não supostos:
   - **S1 verde** (risco nº 1) — `claude -p` roda headless em container autenticado só por `CLAUDE_CODE_OAUTH_TOKEN`, lê skill montada `:ro`, segue instrução literal e escreve JSON válido; transcript `stream-json` parseável com `session_id`; `docker exec` + `claude --resume` reescreve a saída na mesma sessão. **D1 = `--allowedTools Read,Write,Bash`** (sem `--dangerously-skip-permissions`), **D5 não acionada** (o fallback de montar `~/.claude` não foi preciso), **D6 verde**. CLI 2.1.224, modelo `claude-opus-5`
   - **S2 verde** — dois runners na 8080 ao mesmo tempo, cada um enxergando o próprio processo, zero porta publicada, 8080 do host livre
@@ -27,15 +34,22 @@ Atualizado em: 07/08/2026 (America/Sao_Paulo) — **F0 concluída**, `skills-map
 
 ## Em andamento
 
-- Nada em andamento. A F0 fechou; a F1 ainda não começou.
+- Nada em andamento. A F1 fechou; a F2 ainda não começou.
 
 ## Próximo passo
 
-- **F1 — Banco e domínio, e ela está destravada.** As seis pré-condições foram conferidas uma a uma em 07/08/2026 e estão todas `[x]` no arquivo da fase; **as dez decisões da F1 já foram tomadas com o usuário**, todas conforme a recomendação (registro na tabela do arquivo da fase). Ou seja: não há nada a discutir antes de começar — é abrir a skill `implementar-fase` e ir para a F1.1
-- **Nada foi commitado.** Ao retomar, o `git status` traz 12 arquivos modificados e 3 novos (`docs/spikes.md`, `docs/skills-map-revisao.md`, `scripts/spikes/`), fruto da F0 inteira e do levantamento do `skills_map`. Vale commitar antes de abrir a F1, para o diff da fase nova não vir misturado
+- **F2 — Runner e execução de jobs.** Depende de F0 e F1, ambas ✅. Antes de abrir, conferir as pré-condições do arquivo da fase — em especial `$SKILLS_DIR` com o `_shared/devolutivas-guide.md`, o gid do socket do Docker e ≥ 15 GB livres. A F2 ganhou duas pré-condições novas vindas desta fase (harness de teste de banco e onde mora o Prisma Client)
+- **Nada foi commitado ainda.** O `git status` acumula a F0 inteira, o levantamento do `skills_map` e agora a F1. Vale quebrar em commits por etapa antes de abrir a F2, para o diff da fase nova não vir misturado
 - Pendências humanas restantes (plan §17): golden repos G1–G10 (§17.2, destrava F3 e F7), `.wslconfig` com `processors=6` e suspensão desativada (§17.4), PrimeVue e o nome "Banca" do §17.5 (só pesam na F6). Resolvidas: §17.1 (skills-map completo), §17.3 (token) e a parte do §17.5 que a F1 exigia (NestJS+Prisma)
 
 ## Decisões recentes
+
+- 07/08/2026: **Prisma 7.9.1** (a versão corrente), que muda três coisas em relação ao que o plano supunha: a URL do datasource sai do `schema.prisma` e vai para `prisma.config.ts`; **driver adapter é obrigatório** (`@prisma/adapter-pg` + `pg`), então ninguém instancia `PrismaClient` direto — a fábrica é `criarPrisma(url)` em `apps/api/src/db/client.ts`; e o client é gerado como TypeScript em `apps/api/generated/`, gitignored e fora de lint/prettier/tsc. `postinstall` da raiz roda `prisma generate`, então clone novo + `pnpm install` já tem client
+- 07/08/2026: **o `.env` continua único, na raiz, e quem o carrega é `apps/api/src/env.ts`**, ancorado no caminho do módulo e não no cwd — `pnpm --filter` roda com cwd em `apps/api` e o vitest roda na raiz. `DATABASE_URL_TEST` (`banca_test`) é variável nova
+- 07/08/2026: **o parser RFC 4180 saiu de dentro do teste da F0 e virou `packages/shared/src/csv/rfc4180.ts`**. Havia duas cópias em rota de colisão — o teste da F0 e o seed da F1 — e duas cópias do parser são duas definições do que é o arquivo. O teste da F0 segue valendo, agora importando o módulo
+- 07/08/2026: **`correcoes.finished_at` e `duracao_s` nasceram nullable**, divergindo da leitura literal do §5. Correção `rodando` não tem fim nem duração, e NOT NULL obrigaria a inventar valor. `transcript_path` seguiu NOT NULL, como o §5 manda — propagado como pré-condição da F4
+- 07/08/2026: **o seed reativa o par que volta ao CSV** (`ativo = true` no update). O arquivo é a fonte da verdade do mapa (§5, §17.1), então estar nele é estar ativo; o `ativo = false` existe para o que saiu de lá, e é sempre desativação, nunca `DELETE` (D7)
+- 07/08/2026: **três validações a mais no seed**, além das que a fase pedia: `timeout_s` não-inteiro, par `(projeto, fase)` repetido dentro do arquivo e arquivo só com cabeçalho. As três são silenciosas se passarem — a segunda faria a linha de baixo sobrescrever a de cima no upsert, e a terceira desativaria o mapa inteiro
 
 - 07/08/2026: **NestJS + Prisma confirmado pelo usuário** (§17.5). A F1 crava o Prisma e a partir dela trocar deixa de ser de graça. PrimeVue e o nome "Banca" seguem em aberto — só pesam na F6
 - 07/08/2026: **as dez decisões da F1 foram tomadas**, todas conforme a recomendação do arquivo da fase. As três discutidas: Prisma em `apps/api/prisma/` (D1), enums de domínio em `packages/shared` e não no client Prisma (D4), e "1 run ativo" como índice único parcial em vez de regra de aplicação (D8). Reabrir qualquer uma exige registrar o motivo
@@ -80,6 +94,14 @@ Cinco buracos que a quebra em fases expôs — todos existiam no plano e nenhum 
 - **A validação do repositório não tinha dono.** `git ls-remote`, comparação com `base_repo_url`, pin do `commit_sha` e resolução da skill (§9.2 passo 1) caíam entre a F4 e a F5. Sem isso, submissão criada em `recebida` nunca sairia de lá. Atribuída à F5, com as transições vindo da F4. Não mexe no plano: o §9.2 já descreve o passo, só não dizia de quem era.
 - **`LlmExecutor` não nascia em lugar nenhum.** É uma das três fronteiras de inversão que o CLAUDE.md autoriza, é premissa da F8 ("trocar CLI por API key é trocar variável de ambiente") e nenhuma fase a entregava. Passou a ser entrega da F3. Também não mexe no plano — o §4 e o CLAUDE.md já a previam.
 
+Achados da F1, com o que já foi feito com cada um:
+
+- **`packages/shared` não tem build, e isso vai ser decidido na F4.0.** O pacote publica `./src/index.ts` direto: funciona no vitest e no `tsx`, que transformam TypeScript na hora, e por isso a F1 inteira roda. O `tsc` do Nest é outra história — pode ser que aceite, pode ser que exija um `dist/`. Virou **tarefa explícita da F4.0**, para ser decidida quando o bootstrap nascer, e não descoberta no meio da F5. É o único item da F1 com consequência real ainda em aberto.
+- **`fileParallelism` do vitest é opção de raiz, não de projeto — e declarada no projeto é ignorada em silêncio.** O risco que o arquivo da fase previu ("testes de banco em paralelo se atropelam") aconteceu: `skills-map.test.ts` passava sozinho e falhava junto com `schema.test.ts`, porque o truncate de um apagava a fixture do outro no meio da asserção. A primeira correção, dentro do projeto `db`, não teve efeito nenhum. Está resolvido na raiz do `vitest.config.ts`, com o porquê comentado — **quem reativar paralelismo de arquivo reintroduz a falha intermitente**.
+- **`pnpm test` agora exige Postgres de pé, e falha com mensagem acionável.** O harness cria `banca_test` e aplica as migrations sozinho, mas não sobe o container: sem `docker compose up -d`, o erro diz exatamente isso. Era uma consequência prevista no fim da F0; agora é fato.
+- **O `updated_at` de `skills_map` sobe a cada `db:seed`, mesmo sem nada ter mudado.** O upsert escreve a linha toda, então a coluna registra "quando foi semeado", não "quando mudou". Não atrapalha nada hoje; se algum dia você quiser auditar mudança de mapeamento, é a hora de comparar antes de escrever.
+- **O pnpm pôs `tsx@4.23.11` na lista de dispensa de quarentena.** O gate de "pacote publicado há poucos dias" barrou o tsx, que publica quase diariamente e que o vite já resolve como peer opcional — qualquer versão corrente cairia na mesma lista. A entrada foi escrita pelo próprio pnpm no `pnpm-workspace.yaml` e recebeu comentário explicando por quê; `prisma` e `@prisma/engines` também entraram no `allowBuilds` (o script de instalação é o que baixa o query engine — sem ele não há CLI de banco).
+
 Outros pontos que valem sua atenção:
 
 - **Cada fase carrega uma seção "Decisões a tomar nesta fase"** — 79 perguntas que o plano não respondeu, com opções e recomendação. Vale ler as da fase antes de mandar implementar; são o tipo de coisa que, decidida em silêncio no meio do código, ninguém revisa. As mais consequentes: onde mora o schema Prisma (F1 D1), a flag de permissão do CLI headless (F0 D1), o `<id>` de `fc-job-<id>` (F2 D1), e onde ficam os zips dos golden repos (F7 D1).
@@ -90,7 +112,7 @@ Outros pontos que valem sua atenção:
 - **O CLI usa um segundo modelo por conta própria.** O `modelUsage` do transcript mostra `claude-haiku-4-5` com 617 tokens de entrada, além do `claude-opus-5` pedido. Irrelevante no custo (US$ 0,0007), relevante para o §14: "modelo fixado por run" descreve o modelo da correção, não tudo o que roda dentro do CLI.
 - **Tool negada não faz barulho.** Em `-p` não há quem responda ao pedido de permissão: a chamada é negada, o agente segue e a corrida termina com exit 0. A perda aparece só no array `permission_denials` do transcript. Uma skill que precise de `Glob`/`Grep`/`Edit` com a allowlist atual produziria correção pior sem nenhum erro. Já é tarefa da F3, mas vale saber que é assim que esse erro se parece.
 - **`claude setup-token` tem dois valores parecidos e é fácil trocar.** O que vai no `.env` é o `sk-ant-oat01-…` que o CLI imprime **no fim**; o código que o navegador exibe no meio do fluxo volta para o terminal, não para o arquivo. Trocar os dois dá `401 Invalid bearer token` — custou um ciclo de diagnóstico aqui, e a pré-condição da F0 e o §17.3 passaram a avisar. O token vale ~1 ano; quando expirar, o sintoma vai ser exatamente esse 401.
-- **`pnpm test` passa a exigir Postgres de pé a partir da F1.** Consequência natural, mas que hoje não existe: quem clonar o repo e rodar `pnpm test` sem `docker compose up -d` vai ver falha, não skip.
+- ✅ **`pnpm test` passa a exigir Postgres de pé a partir da F1.** Aconteceu; ver o achado da F1 acima.
 - ✅ **Os hooks estão ativos.** Verificado ao vivo nesta sessão: `docker system prune --help` foi **bloqueado** pelo guard 1, com a mensagem completa. A observação anterior ("só valem a partir da próxima sessão") era sobre o wiring, e ele entrou. O `selftest.sh` passou de 20 para 31 verificações e os números do aceite A3 foram corrigidos.
 - **Fail-open é o modo de falha do hook.** Script sumido, sem bit de execução ou com timeout estourado deixa o comando passar — quebrar o guard não trava o trabalho, silenciosamente desprotege. `selftest.sh` existe para transformar isso em falha barulhenta; rode-o quando mexer em qualquer guard.
 - **Guard não substitui a regra escrita.** O hook cobre o caminho `Bash`; escrever segredo em arquivo via Write/Edit passa longe dele. E commit feito por você direto no terminal não passa por nenhum guard — se quiser cobrir esse caminho, o mesmo scanner funciona como `pre-commit` do git.
@@ -100,5 +122,5 @@ Outros pontos que valem sua atenção:
 - **Node não está no PATH de shell não-interativo.** Ele existe via nvm (v20.20.2 e v24.11.1), mas `nvm.sh` só carrega em shell interativo — qualquer script, hook ou cron que rode `node`/`pnpm` sem carregar o nvm antes vai falhar com "command not found". Se isso incomodar na F2 (Job Controller chamando processos), o conserto é caminho absoluto ou `corepack` no PATH do serviço.
 - **`docker compose up -d` foi executado e o Postgres ficou de pé** (`banca-dev-db-1`, healthy, com `restart: unless-stopped`). Se preferir a máquina limpa: `docker compose down` — o volume `banca-dev_pgdata` sobrevive.
 - **A porta 5432 está publicada no host.** É o banco de dev, não uma stack de aluno, então não viola o §8 — mas se você já tiver um Postgres local nessa porta, o `up` falha e o conserto é mudar o lado esquerdo do mapeamento no `compose.yaml`.
-- **`pnpm test` hoje cobre um artefato, não código.** O único teste valida a estrutura do `docs/skills-map.csv` (cabeçalho, 6 colunas, slug único e com prefixo, enum de modo, par projeto+fase único). Escolhi isso em vez de um teste-placeholder porque é o arquivo que você vai editar à mão amanhã, com 49 linhas — é onde o erro de digitação realmente acontece. Quando a F1 escrever o seed, esse teste vira o contrato que ele já tem que respeitar.
+- ✅ **O teste do `docs/skills-map.csv` virou o contrato que o seed respeita**, como previsto. Ele segue valendo e não foi substituído: o que mudou é que agora ele e o seed leem o arquivo com o **mesmo** parser, o de `packages/shared/src/csv/rfc4180.ts`.
 - **`modo_avaliacao` do CSV é digitado à mão** e o §7 só detecta divergência *depois* que a correção rodou (vira gatilho, força revisão). Ou seja: modo errado no CSV custa uma correção desperdiçada, não uma devolutiva errada enviada. Aceito conscientemente.

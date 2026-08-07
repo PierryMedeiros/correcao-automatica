@@ -21,7 +21,7 @@ seguintes.
 | Fase | Status | Estimativa | Depende de |
 |---|---|---|---|
 | [F0 — Fundação e spikes](F0-fundacao-e-spikes-concluida.md) | ✅ implementada em 2026-08-07 | 1–2d | — |
-| [F1 — Banco e domínio](F1-banco-e-dominio.md) | ⬜ não iniciada | 1–2d | F0 |
+| [F1 — Banco e domínio](F1-banco-e-dominio-concluida.md) | ✅ implementada em 2026-08-07 | 1–2d | F0 |
 | [F2 — Runner e execução de jobs](F2-runner-e-jobs.md) | ⬜ não iniciada | 3–4d | F0, F1 |
 | [F3 — Correção com Claude](F3-correcao-com-claude.md) | ⬜ não iniciada | 3–5d | F0, F1, F2 |
 | [F4 — Fila, estados e resiliência](F4-fila-estados-e-resiliencia.md) | ⬜ não iniciada | 2–3d | F1, F2, F3 |

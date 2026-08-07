@@ -1,0 +1,3 @@
+projeto,fase,skill_slug,modo_avaliacao,base_repo_url,timeout_s
+GoLang,Client-Server-API,corrige-client-server-api,execucao,,
+Desafios MBA Arquitetura,"Do compose ao cluster: Docker, Kubernetes e Terraform,corrige-compose-cluster,estatica,,

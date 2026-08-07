@@ -1,0 +1,24 @@
+{
+  "name": "@banca/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate deploy && prisma generate",
+    "db:migrate:create": "prisma migrate dev --create-only",
+    "db:seed": "tsx prisma/seed/index.ts"
+  },
+  "dependencies": {
+    "@banca/shared": "workspace:*",
+    "@prisma/adapter-pg": "^7.9.1",
+    "@prisma/client": "^7.9.1",
+    "dotenv": "^17.2.4"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.16.0",
+    "pg": "^8.22.0",
+    "prisma": "^7.9.1",
+    "tsx": "^4.23.11"
+  }
+}

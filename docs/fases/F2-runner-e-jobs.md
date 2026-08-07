@@ -18,6 +18,11 @@ construção" (§2.4) e "nada destrutivo global" (§2.5) em código executável.
 
 - [ ] F1 marcada ✅ em `docs/fases/README.md`, com as tabelas `correcoes`, `submissoes`, `skills_map`,
       `config` e `eventos` migradas (`pnpm db:migrate` de banco zerado sai 0)
+- [ ] Harness de teste de banco da F1 entendido antes de escrever teste que toca Postgres: teste de
+      banco mora em `apps/api/tests/**/*.test.ts` (projeto `db` do `vitest.config.ts`), roda contra
+      `DATABASE_URL_TEST` (`banca_test`), recebe as tabelas limpas antes de cada teste e usa
+      `prismaTeste()` de `apps/api/tests/setup-db.ts`. `fileParallelism: false` é o que impede um
+      arquivo de truncar a fixture do outro — não reative
 - [ ] Spikes S2 (netns) e S3 (compose sem portas + network externa) verdes e documentados em
       `docs/spikes.md` — esta fase é a industrialização exata da topologia que eles provaram
 - [ ] Spike S1 verde: a imagem mínima com o CLI autenticou por `CLAUDE_CODE_OAUTH_TOKEN`
@@ -53,7 +58,7 @@ construção" (§2.4) e "nada destrutivo global" (§2.5) em código executável.
 | # | Pergunta em aberto | Opções | Recomendação |
 |---|---|---|---|
 | D1 | Qual é o `<id>` de `fc-job-<id>` e de `$JOBS_DIR/<id>`? O plano usa `<id>` sem dizer de quem | `correcoes.id` · id do job do pg-boss (só existe na F4) · id próprio de job | `correcoes.id`, com a linha criada em `rodando` **antes** do `docker run`: o §10.12 só detecta órfã se a correção `rodando` já estiver persistida, e o §11 só distingue dir órfão de referenciado se o nome do dir for a chave. Ordem: insert `correcoes` → cria job dir → network → runner |
-| D2 | Onde mora o Job Controller, o gerador de override e o janitor, se o bootstrap do Nest só chega na F4.0? | `apps/api/src/` como TS puro, sem `main.ts`/DI · pacote próprio · esperar a F4 | `apps/api/src/jobs/` e `apps/api/src/janitor/` em TS puro (funções e classes sem decorator); a F4.0 os embrulha em provider quando o `AppModule` nascer. Alinhar com a decisão da F1 sobre onde mora o Prisma Client |
+| D2 | Onde mora o Job Controller, o gerador de override e o janitor, se o bootstrap do Nest só chega na F4.0? | `apps/api/src/` como TS puro, sem `main.ts`/DI · pacote próprio · esperar a F4 | `apps/api/src/jobs/` e `apps/api/src/janitor/` em TS puro (funções e classes sem decorator); a F4.0 os embrulha em provider quando o `AppModule` nascer. A F1 já resolveu onde mora o Prisma: schema e migrations em `apps/api/prisma/`, e o client sai de `criarPrisma(url)` em `apps/api/src/db/client.ts` — **não** instanciar `PrismaClient` direto (o Prisma 7 exige driver adapter, e a fábrica é quem o monta) |
 | D3 | O janitor é cron do pg-boss (§12), mas pg-boss só entra na F4 | função pura + entrada CLI (`pnpm janitor`) · antecipar pg-boss (viola regra dura 8) · cron temporário de terceiro | CLI: a F4 registra o cron chamando exatamente a mesma função. Registrar no STATUS.md como dívida com destino |
 | D4 | Que carga o entrypoint executa sem o `claude -p`, que é entrega da F3? | seam `FC_PAYLOAD_CMD` (vazio na F2, preenchido pela F3 com a invocação headless) · imagem `banca-runner-fake` separada · escrever já a invocação (viola regra dura 8) | Seam. O controller escreve `job.json` no job dir com os dados do job (inclusive o comando canônico de compose); a F3 acrescenta a renderização de `prompt.txt` a partir de `runner/prompt-template.md` + `job.json` |
 | D5 | O que a F2 faz com o `dossie.json`, se o schema é entrega da F3? | coletar como artefato (existe? é JSON parseável?) e deixar o ponto de extensão · antecipar o schema | Coletar + ponto de extensão entre coleta e teardown; a F3 pluga validador e retry corretivo (`docker exec` + `--resume`) ali, sem reordenar nada |

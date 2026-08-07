@@ -3,6 +3,9 @@ dist
 coverage
 pnpm-lock.yaml
 
+# client do Prisma — código gerado, não escrito
+apps/api/generated/
+
 # Markdown deste repo é prosa escrita à mão (plano, skills, devolutivas) com quebras
 # de linha e tabelas deliberadas — reformatar automaticamente destruiria o layout.
 *.md

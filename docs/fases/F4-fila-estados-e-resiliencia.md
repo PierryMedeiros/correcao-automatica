@@ -20,6 +20,7 @@ de deixar submissão em `corrigindo`, e o run acaba: lote inteiro terminal vira 
 - [ ] `pnpm db:migrate` sobe do zero e o banco tem `submissoes`, `correcoes`, `runs`, `eventos`, `notificacoes`, `config` (§5) — conferir com `\dt` no psql do container do `compose.yaml`
 - [ ] Índice único parcial de submissão ativa existe (§5) — conferir com `\d submissoes` que a cláusula `WHERE` exclui `enviada`, `cancelada`, `substituida`
 - [ ] `apps/api` existe como pacote TypeScript com Prisma Client, Job Controller e janitor (F1 D2, F2 D2), ainda sem `main.ts` nem DI — o bootstrap do Nest é a etapa **F4.0** desta fase, não pré-condição
+- [ ] `correcoes.transcript_path` é **NOT NULL** (F1, §5): toda linha de `correcoes` — inclusive a marcada `nao_executada` do §10.10 — nasce com o caminho do job dir. Se em algum cenário a F4 precisar criar a linha antes de haver job dir, isso é divergência do §5 e muda no plano primeiro. `finished_at` e `duracao_s`, ao contrário, são nulos enquanto a correção está `rodando`
 - [ ] Job Controller (F2) expõe `abortarJob` (kill + teardown por `fc.job=<id>`) e o harness `pnpm job-fake`, com o seam `FC_PAYLOAD_CMD`, continua rodando
 - [ ] Rotina de recuperação de órfãos da F2 (F2.8) existe: marca correção `rodando` como `falhou` ("órfã pós-reinício") e aborta os recursos Docker do job — a F4 a chama, não a reimplementa
 - [ ] `LlmExecutor` (interface) e `ClaudeCliExecutor` (implementação CLI headless) existem — entrega da F3 (CLAUDE.md, fronteiras de inversão)
@@ -71,7 +72,8 @@ de deixar submissão em `corrigindo`, e o run acaba: lote inteiro terminal vira 
 - [ ] Módulo de configuração lendo o `.env` uma vez e validando presença de `DATABASE_URL`, `JOBS_DIR`, `SKILLS_DIR`, `RUNNER_IMAGE` e `CLAUDE_CODE_OAUTH_TOKEN`: falta de variável derruba o start, não o primeiro job; nenhum valor de segredo em log (regra dura 5)
 - [ ] Logger pino como provider, com `job_id`/`submissao_id` em todo log da fila e do worker (§12)
 - [ ] Exception filter de domínio para os erros tipados desta fase; o filter HTTP é da F5
-- [ ] `enableShutdownHooks()` + SIGTERM/SIGINT para que o `onModuleDestroy` da fila (F4.2) rode de verdade, e Prisma Client como provider desconectando no shutdown
+- [ ] `enableShutdownHooks()` + SIGTERM/SIGINT para que o `onModuleDestroy` da fila (F4.2) rode de verdade, e Prisma Client como provider desconectando no shutdown — o provider embrulha `criarPrisma(url)` de `apps/api/src/db/client.ts` (F1), que é quem monta o driver adapter que o Prisma 7 exige
+- [ ] Resolver como o build do Nest consome `@banca/shared`: a F1 deixou o pacote publicando `./src/index.ts` direto, sem build (funciona em vitest e `tsx`, que transformam TS). Se o `tsc` do Nest não aceitar o arranjo, a saída é dar um `build` ao shared e apontar o `exports` para `dist/` — decisão desta etapa, registrada no STATUS.md, não improviso no meio da F5
 - [ ] O código TS puro de F1/F2 (`jobs/`, `janitor/`) continua sendo função chamada — o bootstrap embrulha, não reescreve (F1 D2, F2 D2)
 
 **Testes:** `apps/api/test/bootstrap.test.ts` — o contexto sobe e desce sem handle pendurado; variável obrigatória ausente derruba o start com mensagem nomeando a variável.

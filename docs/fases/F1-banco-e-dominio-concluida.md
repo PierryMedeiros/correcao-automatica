@@ -1,6 +1,6 @@
 # F1 — Banco e domínio
 
-> **Status:** ⬜ não iniciada
+> **Status:** ✅ implementada em 2026-08-07
 > **Estimativa:** 1–2 dias úteis (plan §13)
 > **Depende de:** F0 (fundação do monorepo)
 > **Destrava:** F2 (onde a correção é persistida) · F3 (`skills_map` que o prompt lê) · F4 (estados e fila) · F5 (leitura da API)
@@ -10,7 +10,7 @@
 
 O sistema passa a ter um banco que conhece o domínio inteiro do §5: as nove tabelas, os enums do §6 e o
 índice único parcial que torna duas submissões ativas do mesmo aluno no mesmo desafio impossíveis por
-construção. `pnpm db:migrate` sobe tudo do zero e `pnpm db:seed` carrega os 49 pares desafio→skill do CSV
+construção. `pnpm db:migrate` sobe tudo do zero e `pnpm db:seed` carrega os 48 pares desafio→skill do CSV
 mais os defaults operacionais de `config`.
 
 ## Pré-condições
@@ -83,18 +83,18 @@ Os caminhos abaixo assumem **D1 = `apps/api/prisma/`**; decisão diferente = aju
 
 **Tarefas**
 
-- [ ] Criar o pacote `@banca/shared` (privado, ESM, estendendo `tsconfig.base.json`) no workspace
-- [ ] Declarar como `const` + tipo derivado os enums do §5: `OrigemSubmissao`, `StatusSubmissao` (os 12
+- [x] Criar o pacote `@banca/shared` (privado, ESM, estendendo `tsconfig.base.json`) no workspace
+- [x] Declarar como `const` + tipo derivado os enums do §5: `OrigemSubmissao`, `StatusSubmissao` (os 12
       estados do §6), `StatusCorrecao`, `Veredito`, `ModoAvaliacao`, `PoliticaRevisao`, `StatusRun`
-- [ ] Declarar `STATUS_TERMINAIS = ['enviada','cancelada','substituida']` e
+- [x] Declarar `STATUS_TERMINAIS = ['enviada','cancelada','substituida']` e
       `estaAtiva(status) = !STATUS_TERMINAIS.includes(status)` — o complemento do §5 vira **uma** função,
       nunca uma segunda lista; comentar o porquê (Apêndice B v1.3 item 1)
-- [ ] Registrar no topo de `estados.ts` que a F1 é a **fase titular** de `StatusSubmissao`,
+- [x] Registrar no topo de `estados.ts` que a F1 é a **fase titular** de `StatusSubmissao`,
       `STATUS_TERMINAIS` e `estaAtiva`: fase seguinte que precisar da regra **acrescenta** a este arquivo
       (a F4 traz para cá a tabela de transições do §6 e `podeTransicionar()`) — nunca redeclara o enum em
       outro caminho nem cria segunda função de complemento com outro nome. Dois caminhos para a mesma regra
       é a duplicação que o CLAUDE.md proíbe ("`packages/shared` é o dono dos tipos; nunca duplicar tipos")
-- [ ] Exportar tudo por `src/index.ts`; nenhum tipo de domínio duplicado fora daqui (CLAUDE.md)
+- [x] Exportar tudo por `src/index.ts`; nenhum tipo de domínio duplicado fora daqui (CLAUDE.md)
 
 **Testes:** `estados.test.ts` — a lista tem 12 estados; os três terminais dão `false` em `estaAtiva`;
 `link_invalido`, `sem_skill` e `erro` dão `true` (a consequência assumida no §5).
@@ -111,14 +111,15 @@ Os caminhos abaixo assumem **D1 = `apps/api/prisma/`**; decisão diferente = aju
 
 **Tarefas**
 
-- [ ] Criar `apps/api` como pacote de dados (D2): `prisma` + `@prisma/client`, sem Nest
-- [ ] `schema.prisma` com datasource Postgres lendo `DATABASE_URL` e generator do client
-- [ ] Modelar `skills_map` (§5): `projeto`, `fase`, `skill_slug`, `modo_avaliacao` (enum), `base_repo_url`
+- [x] Criar `apps/api` como pacote de dados (D2): `prisma` + `@prisma/client`, sem Nest
+- [x] `schema.prisma` com datasource Postgres lendo `DATABASE_URL` e generator do client
+      (Prisma 7: a URL mora em `prisma.config.ts`, não mais no schema — ver "Registro de execução")
+- [x] Modelar `skills_map` (§5): `projeto`, `fase`, `skill_slug`, `modo_avaliacao` (enum), `base_repo_url`
       null, `timeout_s` null, `ativo` default `true`, timestamps, `@@unique([projeto, fase])`
-- [ ] Gerar a migration com `prisma migrate dev --create-only` e aplicar com `prisma migrate deploy` —
+- [x] Gerar a migration com `prisma migrate dev --create-only` e aplicar com `prisma migrate deploy` —
       nunca `db push`, nunca SQL fora de migration (regra dura 4)
-- [ ] Adicionar `db:migrate` e `db:seed` ao `package.json` da raiz, delegando para `apps/api`
-- [ ] Criar o harness de teste (D3): `DATABASE_URL_TEST` em `.env.example`, setup do vitest que aplica as
+- [x] Adicionar `db:migrate` e `db:seed` ao `package.json` da raiz, delegando para `apps/api`
+- [x] Criar o harness de teste (D3): `DATABASE_URL_TEST` em `.env.example`, setup do vitest que aplica as
       migrations em `banca_test` e limpa as tabelas entre arquivos; registrar no `include` do vitest
 
 **Testes:** `skills_map` — par `(projeto, fase)` repetido viola a unicidade; `ativo` nasce `true`;
@@ -135,19 +136,20 @@ Os caminhos abaixo assumem **D1 = `apps/api/prisma/`**; decisão diferente = aju
 
 **Tarefas**
 
-- [ ] `runs` (§5): `modelo`, `max_paralelo` default 2, `politica_revisao` (enum), `status` (enum)
-- [ ] `submissoes` (§5): `origem` (enum), `external_id` null, `run_id` FK null, `aluno_nome`,
+- [x] `runs` (§5): `modelo`, `max_paralelo` default 2, `politica_revisao` (enum), `status` (enum)
+- [x] `submissoes` (§5): `origem` (enum), `external_id` null, `run_id` FK null, `aluno_nome`,
       `aluno_email`, `projeto`, `fase`, `skill_slug` null, `repo_url`, `commit_sha` null, `attempt_aluno`
       default 1, `anterior_id` FK auto-referente null, `status` (enum §6), `status_detalhe` null — e
       **nenhuma** coluna de celular/telefone (regra dura 6, §11)
-- [ ] `correcoes` (§5): `submissao_id` FK, `retry_n`, `status` (enum), `veredito` (enum, null), `dossie`
+- [x] `correcoes` (§5): `submissao_id` FK, `retry_n`, `status` (enum), `veredito` (enum, null), `dossie`
       jsonb null, `gatilhos` `text[]`, `modelo`, `duracao_s`, `started_at`, `finished_at`,
       `transcript_path`, `exit_code` null, `erro_resumo` null
-- [ ] `devolutivas` (§5): `submissao_id` FK, `correcao_id` FK **nullable** (Apêndice B v1.3 item 2),
+      (`finished_at` e `duracao_s` nasceram nullable — correção `rodando` não tem fim; ver "Registro de execução")
+- [x] `devolutivas` (§5): `submissao_id` FK, `correcao_id` FK **nullable** (Apêndice B v1.3 item 2),
       `texto_agente`, `texto_final`, `veredito_final` (enum), `enviada_em` null, `enviada_por` null
-- [ ] Declarar os enums do Postgres com exatamente os valores do §5/§6 — 12 estados, nem um a mais (regra dura 3)
-- [ ] Nenhuma constraint de imutabilidade para `texto_agente`: a regra dura 7 é da aplicação (F5)
-- [ ] Indexar o que fila e histórico consultam: `submissoes(status)`, `correcoes(submissao_id)`,
+- [x] Declarar os enums do Postgres com exatamente os valores do §5/§6 — 12 estados, nem um a mais (regra dura 3)
+- [x] Nenhuma constraint de imutabilidade para `texto_agente`: a regra dura 7 é da aplicação (F5)
+- [x] Indexar o que fila e histórico consultam: `submissoes(status)`, `correcoes(submissao_id)`,
       `devolutivas(submissao_id)`
 
 **Testes:** `schema.test.ts` — cada enum do Postgres tem exatamente os valores de `packages/shared` (trava
@@ -164,15 +166,15 @@ D4); `devolutivas` aceita `correcao_id` nulo; nenhuma coluna de `submissoes` con
 
 **Tarefas**
 
-- [ ] Criar o índice em SQL cru dentro da migration — o Prisma não expressa `WHERE` em `@@unique`, então a
+- [x] Criar o índice em SQL cru dentro da migration — o Prisma não expressa `WHERE` em `@@unique`, então a
       migration nasce com `--create-only` e é editada antes de aplicar
-- [ ] Escrever o predicado por **complemento**: `WHERE status NOT IN ('enviada','cancelada','substituida')`.
+- [x] Escrever o predicado por **complemento**: `WHERE status NOT IN ('enviada','cancelada','substituida')`.
       **Nunca** listar os estados ativos (§5 + Apêndice B v1.3 item 1) — assim estado novo entra como ativo
       automaticamente e as duas listas não têm como divergir
-- [ ] Indexar `(lower(aluno_email), projeto, fase)` (D10)
-- [ ] Comentar na migration a consequência assumida: `link_invalido`, `sem_skill` e `erro` são ativos, logo
+- [x] Indexar `(lower(aluno_email), projeto, fase)` (D10)
+- [x] Comentar na migration a consequência assumida: `link_invalido`, `sem_skill` e `erro` são ativos, logo
       o reenvio com o link corrigido **substitui** a submissão travada, sem criar segunda linha (§5, §10.5)
-- [ ] Criar também o índice único parcial de `runs` em `status = 'ativo'` se D8 for aceita (§10.21), e
+- [x] Criar também o índice único parcial de `runs` em `status = 'ativo'` se D8 for aceita (§10.21), e
       registrar em comentário que a lista de terminais em TypeScript é `STATUS_TERMINAIS` (F1.1)
 
 **Testes:** `submissao-ativa.test.ts` — matriz sobre **todos** os 12 estados: em cada estado ativo, a
@@ -191,13 +193,13 @@ Estado novo sem revisão do índice quebra este teste.
 
 **Tarefas**
 
-- [ ] `eventos` (§5, §12): `submissao_id` FK **nullable** (D9), `tipo`, `payload` jsonb, `ts` default
+- [x] `eventos` (§5, §12): `submissao_id` FK **nullable** (D9), `tipo`, `payload` jsonb, `ts` default
       `now()`; append-only por convenção — sem update nem delete no código da aplicação
-- [ ] `notificacoes` (§5): `tipo`, `texto`, `lida` default `false`, `link` null
-- [ ] `webhook_payloads` (§5, §3): `headers` jsonb, `body` bruto, `ts` — nasce vazia e dormente; quem a
+- [x] `notificacoes` (§5): `tipo`, `texto`, `lida` default `false`, `link` null
+- [x] `webhook_payloads` (§5, §3): `headers` jsonb, `body` bruto, `ts` — nasce vazia e dormente; quem a
       preenche é o receptor, fora desta fase
-- [ ] `config` (§5): `chave` PK text, `valor` jsonb (D5), `descricao` text, `updated_at`
-- [ ] Indexar `eventos(submissao_id, ts)` — é a query da timeline do card (§9.3)
+- [x] `config` (§5): `chave` PK text, `valor` jsonb (D5), `descricao` text, `updated_at`
+- [x] Indexar `eventos(submissao_id, ts)` — é a query da timeline do card (§9.3)
 
 **Testes:** `apoio.test.ts` — `eventos` aceita `submissao_id` nulo; `config` recusa chave duplicada;
 `notificacoes.lida` nasce `false`.
@@ -206,31 +208,31 @@ Estado novo sem revisão do índice quebra este teste.
 
 ### F1.6 — Seed do `skills_map` a partir do CSV
 
-**Entrega:** `pnpm db:seed` carrega os 49 pares desafio→skill ou recusa o arquivo dizendo onde está o erro.
+**Entrega:** `pnpm db:seed` carrega os 48 pares desafio→skill ou recusa o arquivo dizendo onde está o erro.
 
 **Arquivos:** `apps/api/prisma/seed/skills-map.ts`, `apps/api/prisma/seed/csv.ts`,
 `apps/api/tests/db/seed-skills-map.test.ts`, `apps/api/tests/fixtures/*.csv`
 
 **Tarefas**
 
-- [ ] Ler `docs/skills-map.csv` exigindo o cabeçalho exato
+- [x] Ler `docs/skills-map.csv` exigindo o cabeçalho exato
       `projeto,fase,skill_slug,modo_avaliacao,base_repo_url,timeout_s` — mesmo contrato já travado por
       `tests/skills-map.test.ts` (F0), que segue valendo: o seed respeita esse teste, não o substitui
-- [ ] Normalizar BOM e CRLF antes de dividir as linhas (o CSV é editado à mão, possivelmente no Windows)
-- [ ] **Parsear conforme RFC 4180, nunca com `split(',')`**: nome de desafio na plataforma contém vírgula
+- [x] Normalizar BOM e CRLF antes de dividir as linhas (o CSV é editado à mão, possivelmente no Windows)
+- [x] **Parsear conforme RFC 4180, nunca com `split(',')`**: nome de desafio na plataforma contém vírgula
       (`Do compose ao cluster: Docker, Kubernetes e Terraform`), e o casamento com o bloco colado é
       literal — trocar a vírgula por outro caractere garantiria que o par nunca casa. Valor com vírgula
       vai entre aspas e aspas internas são dobradas; `tests/skills-map.test.ts` (F0) já traz o parser e o
       teste de aspas desbalanceadas, e o seed tem que ler igual
-- [ ] Recusar linha com número de colunas ≠ 6, reportando o número da linha
-- [ ] Recusar a **linha inteira** quando `projeto`, `fase`, `skill_slug` ou `modo_avaliacao` vier vazio, com
+- [x] Recusar linha com número de colunas ≠ 6, reportando o número da linha
+- [x] Recusar a **linha inteira** quando `projeto`, `fase`, `skill_slug` ou `modo_avaliacao` vier vazio, com
       o número da linha (contando o cabeçalho, como no teste da F0) e o nome do campo faltante (§13 F1);
       `base_repo_url` e `timeout_s` são opcionais por §5
-- [ ] Recusar `modo_avaliacao` fora de `{execucao, estatica}` e `skill_slug` sem prefixo `corrige-`
-- [ ] Validar o arquivo inteiro antes de escrever qualquer linha; havendo recusa, sair com código ≠ 0
+- [x] Recusar `modo_avaliacao` fora de `{execucao, estatica}` e `skill_slug` sem prefixo `corrige-`
+- [x] Validar o arquivo inteiro antes de escrever qualquer linha; havendo recusa, sair com código ≠ 0
       listando **todos** os problemas e sem tocar no banco (D6)
-- [ ] Upsert por `(projeto, fase)` — rodar duas vezes não duplica nem zera `ativo`
-- [ ] Marcar `ativo = false` no que sumiu do CSV; nunca deletar (D7). Imprimir sumário final: inseridas,
+- [x] Upsert por `(projeto, fase)` — rodar duas vezes não duplica nem zera `ativo`
+- [x] Marcar `ativo = false` no que sumiu do CSV; nunca deletar (D7). Imprimir sumário final: inseridas,
       atualizadas, desativadas
 
 **Testes:** `seed-skills-map.test.ts` com fixtures pequenas — CSV válido carrega N linhas; linha sem `fase`
@@ -252,8 +254,8 @@ par para mapear (registro em `docs/skills-map-revisao.md`).
 
 **Tarefas**
 
-- [ ] `CREATE EXTENSION IF NOT EXISTS pg_trgm;` dentro de uma migration Prisma (regra dura 4)
-- [ ] Semear `config` com os defaults do plano, cada chave com `descricao` apontando a seção de origem:
+- [x] `CREATE EXTENSION IF NOT EXISTS pg_trgm;` dentro de uma migration Prisma (regra dura 4)
+- [x] Semear `config` com os defaults do plano, cada chave com `descricao` apontando a seção de origem:
       `pausa_global` como **objeto** `{ "ativa": false, "motivo": null, "desde": null, "tentativas": 0 }`
       (§12) — nunca booleano, porque a pausa automática precisa registrar por quê e desde quando; a
       `descricao` documenta `motivo ∈ {manual, limite_plano, credencial, disco}` (§12, §10.10, §10.11,
@@ -267,12 +269,12 @@ par para mapear (registro em `docs/skills-map-revisao.md`).
       n ≥ 10, senão 80% do timeout efetivo); `gatilho_agregacao_min_ocorrencias` = 3 (§10.27);
       `retomada_intervalos_min` = [5, 15, 30, 60] (§10.10: retomada escalonada após pausa automática) — os quatro
       são lidos pela F7, e nascem aqui para que calibrar seja mudar linha, não recompilar
-- [ ] Semear `timeout_job_padrao_s` = 1500 (§5, §10.9): o plano fixa o valor mas não diz onde ele mora, e
+- [x] Semear `timeout_job_padrao_s` = 1500 (§5, §10.9): o plano fixa o valor mas não diz onde ele mora, e
       `config` é o único lugar que existe — registrar a escolha no `docs/STATUS.md`. A chave é o **único**
       lugar onde 1500 aparece: o timeout efetivo é sempre
       `skills_map.timeout_s ?? config.timeout_job_padrao_s`, e nenhuma fase fixa o literal `1500` no código
       (Job Controller da F2, timeout da F4, gatilho de duração anômala da F7 leem daqui)
-- [ ] Seed de `config` idempotente e **não destrutivo**: chave existente não é sobrescrita (valor calibrado
+- [x] Seed de `config` idempotente e **não destrutivo**: chave existente não é sobrescrita (valor calibrado
       na F7 não pode ser revertido por um `db:seed`); mesmo `pnpm db:seed` roda `config` e `skills_map`
 
 **Testes:** `config-defaults.test.ts` — todas as chaves acima existem com os valores do plano; `pausa_global`
@@ -305,40 +307,47 @@ e `pg_trgm` aparece em `pg_extension`.
 | A1 | Migrations sobem do zero | Dropar `banca_test` e rodar `pnpm db:migrate` | Sem erro; `\dt` lista as 9 tabelas do §5 |
 | A2 | `pg_trgm` instalada por migration | `SELECT extname FROM pg_extension WHERE extname='pg_trgm'` | 1 linha; `similarity('abc','abd')` retorna número |
 | A3 | O índice parcial obedece à definição de ativo por complemento | `pnpm test` (`submissao-ativa.test.ts`) | Matriz dos 12 estados verde: só os 3 terminais permitem segunda linha |
-| A4 | Seed carrega o CSV completo e é idempotente | `pnpm db:seed` duas vezes | 49 linhas em `skills_map`; a segunda execução não duplica |
+| A4 | Seed carrega o CSV completo e é idempotente | `pnpm db:seed` duas vezes | 48 linhas em `skills_map`; a segunda execução não duplica |
 | A5 | CSV com linha incompleta é recusado apontando linha e campo | `pnpm db:seed` com fixture sem `fase` na linha 7 | Exit ≠ 0, mensagem com "linha 7" e o campo `fase`; `skills_map` intocado |
 | A6 | `config` nasce com os defaults do §11/§12/§10 | `SELECT chave, valor FROM config ORDER BY chave` | Todas as chaves de F1.7 com os valores do plano; `pausa_global` como objeto `{ativa:false, motivo:null, desde:null, tentativas:0}` e `timeout_job_padrao_s` = 1500 |
 | A7 | Enums do banco e tipos de `packages/shared` não divergem | `pnpm test` (`schema.test.ts`) | Verde |
 | A8 | Nenhuma coluna de PII proibida existe | `pnpm test` (`schema.test.ts`) | Nenhuma coluna de celular/telefone em `submissoes` |
 | A9 | Qualidade da base mantida | `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm guards` | Tudo verde |
 
-- [ ] A1
-- [ ] A2
-- [ ] A3
-- [ ] A4
-- [ ] A5
-- [ ] A6
-- [ ] A7
-- [ ] A8
-- [ ] A9
+- [x] A1
+- [x] A2
+- [x] A3
+- [x] A4
+- [x] A5
+- [x] A6
+- [x] A7
+- [x] A8
+- [x] A9
 
 ## Testes que nascem nesta fase
 
 - `packages/shared/src/dominio/estados.test.ts` — 12 estados do §6 e a classificação por complemento; é a
   suite do módulo titular, que as fases seguintes ampliam (F4: transições) em vez de recriar em outro arquivo.
+- `packages/shared/src/csv/rfc4180.test.ts` — parser RFC 4180, aspas desbalanceadas, BOM e CRLF. Nasceu aqui
+  porque o parser saiu de dentro do teste da F0 e virou módulo com dois consumidores (ver "Registro de execução").
 - `apps/api/tests/db/schema.test.ts` — enums do Postgres × shared; `correcao_id` nullable; sem coluna de celular.
-- `apps/api/tests/db/submissao-ativa.test.ts` — matriz de unicidade por estado, dois desafios do mesmo aluno, caixa do e-mail.
-- `apps/api/tests/db/seed-skills-map.test.ts` — campo faltante com linha e nome, coluna faltando, modo fora do enum, cabeçalho errado, idempotência, desativação.
+- `apps/api/tests/db/skills-map.test.ts` — unicidade de `(projeto, fase)`, default de `ativo`, campos opcionais nulos.
+- `apps/api/tests/db/submissao-ativa.test.ts` — matriz de unicidade por estado, dois desafios do mesmo aluno, caixa do e-mail, e o índice de 1 run ativo.
+- `apps/api/tests/db/seed-skills-map.test.ts` — campo faltante com linha e nome, coluna faltando, modo fora do enum, cabeçalho errado, idempotência, desativação, e o `db:seed` de ponta a ponta.
 - `apps/api/tests/db/config-defaults.test.ts` — chaves e valores default, formato de objeto de
-  `pausa_global` e `timeout_job_padrao_s` = 1500; reseed não sobrescreve.
+  `pausa_global` e `timeout_job_padrao_s` = 1500; reseed não sobrescreve; `pg_trgm` responde.
 - `apps/api/tests/db/apoio.test.ts` — `eventos.submissao_id` nulo, unicidade de `config.chave`.
-- `apps/api/tests/setup-db.ts` — harness: migra `banca_test` e limpa entre arquivos.
+- `apps/api/tests/setup-db.ts` — harness: cria e migra `banca_test`, e expõe `prismaTeste()`/`limparBanco()`.
+- `apps/api/tests/limpeza.ts` — `setupFiles` do projeto `db`: trunca antes de cada teste e desconecta no fim.
 - `tests/skills-map.test.ts` (F0) — segue valendo como contrato do CSV que o seed respeita.
 
 ## Riscos e armadilhas
 
 - **Prisma não expressa índice parcial.** Os índices de F1.4 só existem porque a migration foi editada após
   `--create-only`. Alerta: regenerar a migration ou usar `prisma db push` e o A3 passar a aceitar duas ativas.
+  **Verificado em bancada nesta fase:** a migration seguinte (F1.5), gerada com `--create-only` depois dos
+  índices já aplicados, **não** propôs `DROP` neles — o Prisma 7 ignora o que não sabe expressar. Bom sinal,
+  mas não é garantia contratual: quem cobra é `submissao-ativa.test.ts`, que falha inteiro se um dos dois sumir.
 - **`prisma migrate dev` propõe reset ao detectar drift.** Nunca rodar contra o banco `banca` com dados; o
   fluxo desta fase é `--create-only` + `migrate deploy`.
 - **`pnpm test` passa a exigir Postgres de pé.** Falhar com mensagem acionável, não pular o teste em
@@ -370,17 +379,69 @@ e `pg_trgm` aparece em `pg_extension`.
 
 ## Impacto em fases seguintes
 
-A preencher no encerramento da fase.
-
 | O que mudou aqui | Fase afetada | O que foi atualizado lá |
 |---|---|---|
+| O Prisma 7 exige driver adapter: `PrismaClient` não se instancia direto, sai de `criarPrisma(url)` em `apps/api/src/db/client.ts` | F2, F4 | F2 D2 deixou de dizer "alinhar com a decisão da F1" e passou a nomear o caminho e a fábrica; a tarefa do provider de Prisma da F4.0 aponta para `criarPrisma` |
+| O harness de teste de banco nasceu com forma própria: projeto `db` no `vitest.config.ts`, testes em `apps/api/tests/`, `banca_test`, `prismaTeste()`, e `fileParallelism: false` como requisito de correção | F2 | Pré-condição nova descrevendo o harness e avisando para não reativar o paralelismo de arquivos |
+| `correcoes.transcript_path` é NOT NULL; `finished_at` e `duracao_s` são nullable | F4 | Pré-condição nova: a linha `nao_executada` do §10.10 também precisa do caminho do job dir; mudar isso é divergência do §5 e vai ao plano primeiro |
+| `packages/shared` publica `./src/index.ts` sem build — funciona em vitest e `tsx`, mas o `tsc` do Nest é outra história | F4 | Tarefa nova na F4.0: decidir o arranjo (manter, ou dar `build` ao shared e apontar `exports` para `dist/`) e registrar no STATUS.md, em vez de descobrir no meio da F5 |
+| O `vitest.config.ts` deixou de ter um projeto só e passou a ter dois (`unidade`, `db`) | F6 | A tarefa "configurar o vitest para jsdom" virou "acrescentar um **terceiro** projeto", sem tocar nos outros dois |
+| O parser RFC 4180 saiu de dentro do teste da F0 e virou `packages/shared/src/csv/rfc4180.ts`, com `linhasDoCsv` normalizando BOM e CRLF | F5 | A tarefa de normalizar fins de linha do parser de bloco (F5.2) passou a apontar para o módulo existente — reusar ou extrair, nunca escrever a terceira cópia |
+| `pnpm db:generate` passou a existir e `postinstall` da raiz gera o client | — | `CLAUDE.md` (seção Comandos): `db:migrate` e `db:seed` saíram de "nascem depois" para "já funcionam", com `db:generate` ao lado |
+| `DATABASE_URL_TEST` é variável de ambiente nova | — | `.env.example` documenta a variável e o valor local; o harness cria a database sozinho |
 
 ## Registro de execução
 
-A preencher durante a fase.
-
-- **Iniciada em:** AAAA-MM-DD
-- **Concluída em:** AAAA-MM-DD
-- **Decisões tomadas:** (D1–D10 acima; as de arquitetura vão também para o Apêndice B do plano)
-- **Divergências do plano:** (o que divergiu, por quê, e onde foi registrado)
-- **Evidência dos aceites:** (saída de comando, resultado de teste)
+- **Iniciada em:** 2026-08-07
+- **Concluída em:** 2026-08-07
+- **Decisões tomadas:** D1–D10 foram implementadas exatamente como decididas em 07/08/2026 — nenhuma
+  reaberta. Nada subiu para o Apêndice B do plano: as sete etapas materializaram o §5/§6/§11/§12 sem
+  divergir da arquitetura.
+- **Divergências do plano e do próprio arquivo da fase:**
+  - **Prisma 7, não 6.** A versão corrente na instalação é 7.9.1, e ela move a URL do datasource do
+    `schema.prisma` para `prisma.config.ts`, exige driver adapter (`@prisma/adapter-pg` + `pg`) e gera o
+    client como TypeScript em `apps/api/generated/` (gitignored, fora de lint/prettier/tsc). O `.env` da
+    raiz é carregado por `apps/api/src/env.ts`, ancorado no caminho do módulo — `pnpm --filter` roda com
+    cwd em `apps/api` e o vitest na raiz, então cwd não serve de referência.
+  - **`correcoes.finished_at` e `duracao_s` nasceram nullable.** O §5 os lista sem marcar nulo, mas uma
+    correção `rodando` não tem fim nem duração: NOT NULL obrigaria a inventar valor. Materialização, não
+    mudança de arquitetura — registrado aqui e propagado para a F4.
+  - **O parser de CSV virou módulo compartilhado.** A F1.6 previa `apps/api/prisma/seed/csv.ts` com o
+    parser; ele já existia copiado dentro de `tests/skills-map.test.ts` (F0). Duas cópias seriam duas
+    definições do que é o arquivo, e o CLAUDE.md proíbe duplicar. O parser foi para
+    `packages/shared/src/csv/rfc4180.ts`, com teste próprio; `csv.ts` ficou dono só da validação do
+    `skills_map`, e o teste da F0 passou a importar o módulo (mesmas asserções, sem a cópia).
+  - **O harness ganhou dois arquivos, não um.** `setup-db.ts` é o `globalSetup` (cria e migra `banca_test`,
+    uma vez por execução) e `limpeza.ts` é o `setupFiles` (trunca antes de cada teste, desconecta no fim).
+    Juntar os dois papéis em um arquivo exigiria que o mesmo módulo rodasse em dois contextos do vitest.
+  - **Três validações a mais no seed**, além das pedidas: `timeout_s` que não é inteiro, par
+    `(projeto, fase)` repetido dentro do arquivo (é a chave do upsert — repetido, a segunda linha
+    sobrescreveria a primeira em silêncio) e arquivo só com cabeçalho (seria um seed que desativa o mapa
+    inteiro).
+  - **A contagem "49 pares" do Objetivo, da F1.6 e do aceite A4 virou 48**, alinhando com o que a própria
+    F1.6 já dizia em "Pronto quando": a `corrige-castmember-python` se declara variante legada e não tem
+    desafio correspondente (`docs/skills-map-revisao.md`).
+  - **`pnpm db:seed <caminho>` resolve caminho relativo por `INIT_CWD`.** Sem isso o caminho valia a partir
+    de `apps/api`, e o aceite A5 morria em "arquivo não encontrado" antes de exercer a validação.
+- **Riscos previstos que se materializaram:** testes de banco em paralelo se atropelam — `skills-map.test.ts`
+  passava sozinho e falhava junto com `schema.test.ts`. `fileParallelism` é opção de execução, não de projeto:
+  declarada dentro do projeto `db` foi ignorada em silêncio, e só funcionou na raiz do `vitest.config.ts`.
+- **Evidência dos aceites (executados em 07/08/2026):**
+  - **A1** — `DROP DATABASE banca_test` + `CREATE DATABASE` + `prisma migrate deploy`: as 5 migrations
+    aplicaram e `\dt` listou as 9 tabelas do §5 (`config`, `correcoes`, `devolutivas`, `eventos`,
+    `notificacoes`, `runs`, `skills_map`, `submissoes`, `webhook_payloads`) mais `_prisma_migrations`.
+  - **A2** — no banco recém-criado: `SELECT extname FROM pg_extension WHERE extname='pg_trgm'` devolveu
+    1 linha e `similarity('abc','abd')` devolveu `0.33333334`.
+  - **A3** — `submissao-ativa.test.ts`: 25 testes verdes, com a matriz dos 12 estados calculando o desfecho
+    esperado por `estaAtiva()`; só `enviada`, `cancelada` e `substituida` aceitam a segunda linha.
+  - **A4** — `pnpm db:seed` duas vezes: `48 inserida(s)` na primeira, `0 inserida(s), 48 atualizada(s)` na
+    segunda; `SELECT count(*)` = 48, todas ativas.
+  - **A5** — `pnpm db:seed apps/api/tests/fixtures/skills-map-sem-fase-na-linha-7.csv` saiu com código 1,
+    imprimiu `linha 7: campo "fase" vazio` e o `skills_map` seguiu com as 48 linhas anteriores.
+  - **A6** — `SELECT chave, valor FROM config ORDER BY chave`: 15 chaves com os valores do plano,
+    `pausa_global` = `{"ativa": false, "desde": null, "motivo": null, "tentativas": 0}` e
+    `timeout_job_padrao_s` = 1500.
+  - **A7 e A8** — `schema.test.ts`: 14 testes verdes; os 7 enums do Postgres batem valor a valor e em ordem
+    com `packages/shared`, e nenhuma coluna de nenhuma tabela casa com `celular`, `telefone` ou `phone`.
+  - **A9** — `pnpm lint`, `pnpm typecheck`, `pnpm guards` (31 verificações) e `pnpm test`
+    (**252 testes, 10 arquivos**) verdes.

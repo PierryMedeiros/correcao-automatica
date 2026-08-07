@@ -67,7 +67,7 @@ domínio: ele exibe o que a API diz e oferece exatamente as transições humanas
 - [ ] Montar a casca: navegação lateral, slot de banner global (pausa e gatilho 3+), área do badge de notificações e indicador de conexão SSE
 - [ ] Configurar o proxy do Vite para as rotas da API, incluindo a de SSE (D3), com `changeOrigin` e sem buffering
 - [ ] Criar o script `dev` na raiz subindo api + web em watch (CLAUDE.md: `pnpm dev` nasce aqui)
-- [ ] Configurar o vitest para rodar os testes de `apps/web` em ambiente jsdom sem mudar o ambiente node dos testes de `tests/`
+- [ ] Acrescentar um **terceiro projeto** ao `vitest.config.ts` (a F1 já o dividiu em `unidade` e `db`) para os testes de `apps/web` em ambiente jsdom, sem tocar no ambiente node dos outros dois
 - [ ] Incluir `apps/web` em `pnpm lint` e `pnpm typecheck` sem exceção de regra
 
 **Testes:** teste de fumaça montando `AppShell.vue` — existe para provar que o ambiente jsdom do vitest está de pé, não para travar comportamento.

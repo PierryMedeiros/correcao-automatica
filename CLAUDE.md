@@ -46,14 +46,16 @@ Node fixado em `.nvmrc` (24); pnpm vem por corepack, versão pinada em `packageM
 Já funcionam:
 
 - `docker compose up -d` — Postgres de dev
-- `pnpm test` — vitest · `pnpm test:watch`
+- `pnpm db:migrate` — aplica as migrations e regenera o client · `pnpm db:generate` — só o client
+- `pnpm db:seed` — carrega `skills_map` do CSV e os defaults de `config`; aceita um caminho de CSV
+- `pnpm test` — vitest · `pnpm test:watch` — **exige o Postgres de pé**: o projeto `db` cria e migra
+  `banca_test` (`DATABASE_URL_TEST`) sozinho, mas não sobe o container
 - `pnpm lint` — eslint + prettier · `pnpm format` — prettier --write
 - `pnpm typecheck` — tsc --noEmit
 - `pnpm guards` — selftest dos hooks de `scripts/hooks/`
 
 Nascem com a fase que os torna possíveis (não são dívida, são sequência):
 
-- `pnpm db:migrate` / `pnpm db:seed` — Prisma, na F1
 - `pnpm dev` — api + web em watch, quando as apps existirem (F5/F6)
 - `pnpm test:e2e` — golden repos, na F7
 

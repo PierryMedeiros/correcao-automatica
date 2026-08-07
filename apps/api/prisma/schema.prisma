@@ -1,0 +1,276 @@
+// Modelo de dados do plan §5. Banco em snake_case, TypeScript em camelCase — o mapeamento é do
+// Prisma (CLAUDE.md). Ids `bigint` autoincrement porque id interno não vaza para o aluno (§5).
+//
+// Os enums abaixo replicam, valor a valor, os tipos de `packages/shared`: o front não pode depender
+// do client Prisma (D4 da F1), então quem garante que as duas listas não divergem é
+// `apps/api/tests/db/schema.test.ts`, não a importação.
+//
+// A URL do datasource vem de `prisma.config.ts` (Prisma 7 não a lê mais daqui).
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+/// Resolve desafio (projeto, fase) → skill `corrige-*`, sem LLM. É a fonte da verdade do
+/// `modo_avaliacao` (§5, §17.6): as skills não declaram modo no frontmatter e não serão alteradas.
+model SkillsMap {
+  id            BigInt        @id @default(autoincrement())
+  projeto       String
+  fase          String
+  skillSlug     String        @map("skill_slug")
+  modoAvaliacao ModoAvaliacao @map("modo_avaliacao")
+  /// Repo base/template do desafio: detecta o aluno que colou o link do template (§10.2).
+  baseRepoUrl   String?       @map("base_repo_url")
+  /// Override do timeout do job. O default mora em `config.timeout_job_padrao_s` (§10.9).
+  timeoutS      Int?          @map("timeout_s")
+  /// Desativa o par sem excluir a linha — deletar quebraria FK de submissões antigas (D7).
+  ativo         Boolean       @default(true)
+  createdAt     DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([projeto, fase])
+  @@map("skills_map")
+}
+
+/// Um lote de correção com configuração própria (§5). O ciclo de vida está no §6.1.
+model Run {
+  id              BigInt          @id @default(autoincrement())
+  /// Passado como `--model` ao CLI headless.
+  modelo          String
+  /// Default 2, teto 4 — o aviso do teto é da UI (§5, §8).
+  maxParalelo     Int             @default(2) @map("max_paralelo")
+  politicaRevisao PoliticaRevisao @map("politica_revisao")
+  status          StatusRun
+  createdAt       DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  submissoes Submissao[]
+
+  @@map("runs")
+}
+
+/// Uma entrega de aluno (§5). **Não tem coluna de celular** — o parser do intake descarta o campo
+/// e ele nunca chega ao banco (regra dura 6, §11); `schema.test.ts` garante que não passe a ter.
+model Submissao {
+  id            BigInt          @id @default(autoincrement())
+  origem        OrigemSubmissao
+  /// Id da plataforma FC, quando houver.
+  externalId    String?         @map("external_id")
+  runId         BigInt?         @map("run_id")
+  alunoNome     String          @map("aluno_nome")
+  alunoEmail    String          @map("aluno_email")
+  projeto       String
+  fase          String
+  /// Resolvida no intake; na origem manual pode ser escolhida à mão.
+  skillSlug     String?         @map("skill_slug")
+  repoUrl       String          @map("repo_url")
+  /// Pinado no intake via `git ls-remote`; a correção faz checkout nele (§9.2).
+  commitSha     String?         @map("commit_sha")
+  /// Tentativa do aluno neste desafio — não confundir com `correcoes.retry_n`, do sistema.
+  attemptAluno  Int             @default(1) @map("attempt_aluno")
+  anteriorId    BigInt?         @map("anterior_id")
+  status        StatusSubmissao
+  /// Motivo humano-legível, ex.: "repo privado", "link do repositório base" (§10.1–2, §10.31).
+  statusDetalhe String?         @map("status_detalhe")
+  createdAt     DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  run         Run?         @relation(fields: [runId], references: [id])
+  anterior    Submissao?   @relation("TentativaAnterior", fields: [anteriorId], references: [id])
+  tentativas  Submissao[]  @relation("TentativaAnterior")
+  correcoes   Correcao[]
+  devolutivas Devolutiva[]
+  eventos     Evento[]
+
+  @@index([status])
+  @@map("submissoes")
+}
+
+/// Uma execução do agente sobre uma submissão; há mais de uma por retry ou reprocessamento (§5).
+model Correcao {
+  id             BigInt         @id @default(autoincrement())
+  submissaoId    BigInt         @map("submissao_id")
+  /// 1..3 — retry do sistema. `nao_executada` não consome retry (§10.10).
+  retryN         Int            @map("retry_n")
+  status         StatusCorrecao
+  veredito       Veredito?
+  /// Validado contra o JSON Schema do §7 antes de persistir (a validação é da F3).
+  dossie         Json?
+  /// Programáticos + autorrelatados (§12). Qualquer gatilho força revisão humana (§2.7).
+  gatilhos       String[]       @default([])
+  modelo         String
+  startedAt      DateTime       @default(now()) @map("started_at") @db.Timestamptz(3)
+  /// Nulos enquanto a correção está `rodando` — só o fim os preenche.
+  finishedAt     DateTime?      @map("finished_at") @db.Timestamptz(3)
+  duracaoS       Int?           @map("duracao_s")
+  /// Caminho do `transcript.jsonl` no job dir. É ele que torna um job dir "referenciado" e o faz
+  /// viver 14 dias em vez de ser podado como órfão no próximo ciclo do janitor (§11).
+  transcriptPath String         @map("transcript_path")
+  exitCode       Int?           @map("exit_code")
+  erroResumo     String?        @map("erro_resumo")
+  createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  submissao   Submissao    @relation(fields: [submissaoId], references: [id])
+  devolutivas Devolutiva[]
+
+  @@index([submissaoId])
+  @@map("correcoes")
+}
+
+/// O texto que vai para o aluno (§5). Reprocessar cria linha nova; a anterior fica no histórico.
+model Devolutiva {
+  id            BigInt    @id @default(autoincrement())
+  submissaoId   BigInt    @map("submissao_id")
+  /// Nulo quando não houve correção: `link_invalido` gera devolutiva a partir de template global,
+  /// sem gastar agente (§6, Apêndice B v1.3 item 2).
+  correcaoId    BigInt?   @map("correcao_id")
+  /// Rascunho original, imutável. A imutabilidade é regra da aplicação (regra dura 7), não do
+  /// banco: a F5 é quem recusa a escrita; aqui as duas colunas só nascem separadas.
+  textoAgente   String    @map("texto_agente")
+  /// Editável pelo revisor; começa igual ao rascunho.
+  textoFinal    String    @map("texto_final")
+  /// O revisor pode divergir do agente — humano é a autoridade (§2.7).
+  vereditoFinal Veredito  @map("veredito_final")
+  enviadaEm     DateTime? @map("enviada_em") @db.Timestamptz(3)
+  /// Nulo no MVP: não há login (§5).
+  enviadaPor    String?   @map("enviada_por")
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  submissao Submissao @relation(fields: [submissaoId], references: [id])
+  correcao  Correcao? @relation(fields: [correcaoId], references: [id])
+
+  @@index([submissaoId])
+  @@map("devolutivas")
+}
+
+/// Auditoria append-only que alimenta a timeline do card (§5, §9.3, §12). Não tem `updated_at` de
+/// propósito: linha de auditoria que muda não é auditoria. O `ts` é o único carimbo que faz sentido.
+model Evento {
+  id          BigInt   @id @default(autoincrement())
+  /// Nulo em evento de sistema — pausa global e ações de run não têm submissão (D9, §9.3, §12).
+  submissaoId BigInt?  @map("submissao_id")
+  tipo        String
+  payload     Json     @default("{}")
+  ts          DateTime @default(now()) @db.Timestamptz(3)
+
+  submissao Submissao? @relation(fields: [submissaoId], references: [id])
+
+  /// A query da timeline do card: eventos de uma submissão em ordem cronológica (§9.3).
+  @@index([submissaoId, ts])
+  @@map("eventos")
+}
+
+/// Avisos para o humano — `sem_skill`, `erro`, pausa automática, gatilho agregado (§5, §6, §12).
+model Notificacao {
+  id        BigInt   @id @default(autoincrement())
+  tipo      String
+  texto     String
+  lida      Boolean  @default(false)
+  /// Destino do clique, ex.: o card da submissão. Nulo em aviso que não leva a lugar nenhum.
+  link      String?
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("notificacoes")
+}
+
+/// Captura crua do que a plataforma FC mandar (§3, §5). Nasce vazia e dormente: quem a preenche é o
+/// receptor de webhook, que não existe nesta fase. Guardar o payload bruto é o que torna possível
+/// reprocessar uma integração que ainda vai ser descoberta (§9, F9).
+model WebhookPayload {
+  id      BigInt   @id @default(autoincrement())
+  headers Json
+  /// Corpo exatamente como chegou, sem parse — o parse pode estar errado, o bruto não.
+  body    String
+  ts      DateTime @default(now()) @db.Timestamptz(3)
+
+  @@map("webhook_payloads")
+}
+
+/// Configuração operacional em chave/valor (§5, §12). O valor é `jsonb` (D5 da F1) porque a tabela
+/// guarda número, booleano, texto longo e objeto — `pausa_global` é objeto, não flag.
+model Config {
+  chave     String   @id
+  valor     Json
+  /// Diz de qual seção do plano o default veio; é o que permite recalibrar sem reabrir o plano.
+  descricao String
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("config")
+}
+
+enum ModoAvaliacao {
+  execucao
+  estatica
+
+  @@map("modo_avaliacao")
+}
+
+enum OrigemSubmissao {
+  manual
+  fc_platform
+
+  @@map("origem_submissao")
+}
+
+/// Os 12 estados do §6, nem um a mais (regra dura 3). Enum nativo do Postgres é caro de alterar de
+/// propósito: estado novo exige mudar o plano antes da migration.
+enum StatusSubmissao {
+  recebida
+  validando
+  na_fila
+  corrigindo
+  aguardando_revisao
+  pronta_envio
+  enviada
+  link_invalido
+  sem_skill
+  erro
+  cancelada
+  substituida
+
+  @@map("status_submissao")
+}
+
+enum StatusCorrecao {
+  rodando
+  concluida
+  falhou
+  timeout
+  nao_executada
+
+  @@map("status_correcao")
+}
+
+enum Veredito {
+  aprovado
+  aprovado_com_observacao
+  reprovado
+  inconclusivo
+
+  @@map("veredito")
+}
+
+enum PoliticaRevisao {
+  todas
+  so_reprovadas
+  nenhuma
+
+  @@map("politica_revisao")
+}
+
+enum StatusRun {
+  ativo
+  pausado
+  finalizado
+  cancelado
+
+  @@map("status_run")
+}
