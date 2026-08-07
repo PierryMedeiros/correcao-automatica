@@ -2,7 +2,7 @@
 
 Sistema de correção assistida por IA para desafios de alunos da Full Cycle.
 
-- Versão: 1.4 — Agosto/2026
+- Versão: 1.5 — Agosto/2026
 - Nome-código: "Banca" (a banca que corrige). Provisório; trocar depois é um find-replace.
 - Status: documento vivo. Mudança de arquitetura passa por aqui antes de virar código.
 - Envelhecimento: quando uma fase é marcada como implementada, o **código** passa a ser a
@@ -112,7 +112,7 @@ correcao-automatica/
 As skills `corrige-*` **não moram nesta árvore**. Elas são conteúdo com ciclo de vida próprio
 (mudam quando o enunciado do desafio muda, não quando o sistema muda) e ficam em um diretório
 externo, apontado por `SKILLS_DIR` no `.env` — sem cópia, sem symlink, sem submódulo. O Job
-Controller monta `$SKILLS_DIR/<skill_slug>` como `:ro` no runner (§8). Consequência aceita: o
+Controller monta `$SKILLS_DIR/<skill_slug>` e `$SKILLS_DIR/_shared` como `:ro` no runner (§8). Consequência aceita: o
 sistema depende de um diretório fora do seu versionamento; quem o mantém versionado é ele mesmo.
 
 ## 5. Modelo de dados
@@ -186,7 +186,7 @@ Convenção: `snake_case`, timestamps `created_at/updated_at` em tudo, ids `bigi
 | modelo | text | passado como `--model` ao CLI |
 | max_paralelo | int | default 2, teto 4 (com aviso na UI, §8) |
 | politica_revisao | enum: todas, so_reprovadas, nenhuma | "nenhuma" = caminho feliz vai direto para `pronta_envio`; a trava do §2.7 vale sempre |
-| status | enum: ativo, pausado, finalizado, cancelado | MVP: no máximo 1 run ativo por vez |
+| status | enum: ativo, pausado, finalizado, cancelado | MVP: no máximo 1 run ativo por vez. `finalizado` é **automático** (§6.1); `pausado`, retomado e `cancelado` são ação humana. A invariante de 1 run é sobre `ativo`, não sobre a vida do sistema — sem uma saída de `ativo` o segundo run seria recusado para sempre |
 
 **Demais tabelas** (campos óbvios omitidos): `eventos` (auditoria append-only: submissao_id, tipo, payload jsonb, ts), `notificacoes` (tipo, texto, lida, link), `webhook_payloads` (headers, body bruto, ts), `config` (chave/valor: pausa_global, template de devolutiva de link inválido, limiares de disco, retenções).
 
@@ -213,6 +213,21 @@ Estados: `recebida → validando → na_fila → corrigindo → aguardando_revis
 | qualquer não-terminal | substituida | nova entrega do mesmo aluno+projeto+fase chegou (se `corrigindo`, mata o runner; nada é enviado) | API |
 
 Regras transversais: `link_invalido` gera devolutiva a partir de template global do sistema (configurável), sem gastar agente — o motivo (privado, inexistente, link do template) entra no texto — e fica aguardando o envio dela pela transição própria acima. `sem_skill` aguarda ação humana: mapear/escolher a skill e reprocessar, ou cancelar. `sem_skill` e `erro` geram notificação. Terminais de fato: `enviada`, `cancelada`, `substituida`. O histórico mostra tudo.
+
+### 6.1 Ciclo de vida do run
+
+O run tem estados próprios (`runs.status`, §5) e uma máquina bem menor, mas ela precisa existir: o §10.21 recusa criar um segundo run enquanto houver um `ativo`, então um run que nunca sai de `ativo` trava o sistema em um lote para sempre.
+
+| De | Para | Gatilho | Quem |
+|---|---|---|---|
+| ativo | finalizado | **automático**: toda submissão do lote chegou a um terminal de fato do §6 (`enviada`, `cancelada`, `substituida`); avaliado ao fim de cada transição de submissão | API |
+| ativo | pausado | botão pausar — o run para de receber job novo e sai da invariante do §10.21 | Humano |
+| pausado | ativo | botão retomar — recusado se já houver outro run `ativo` | Humano |
+| ativo / pausado | cancelado | botão cancelar | Humano |
+
+**Não existe "finalizar" como ação humana.** Submissão parada em `erro`, `sem_skill` ou `link_invalido` é ativa (§5) e mantém o run aberto: a saída é resolvê-la (reprocessar, enviar) ou cancelar o run. Um botão de finalizar seria uma forma de declarar o lote pronto com trabalho ainda por fazer, e o §1 (meta 3: zero perda de correção) existe justamente para impedir isso — encerrar com pendência é `cancelado`, e o nome tem que dizer a verdade.
+
+Pausa do run ≠ pausa global (§12): a primeira é escopo de lote e ação humana; a segunda é do sistema inteiro e pode ser automática (limite do plano, credencial, disco).
 
 ## 7. Contrato do dossiê (dossie.json)
 
@@ -269,6 +284,7 @@ docker run -d --name fc-job-<id> \
   --cpus 2 --memory 2.5g \
   -v <job_dir>:/workspace \
   -v $SKILLS_DIR/<skill_slug>:/workspace/skill:ro \
+  -v $SKILLS_DIR/_shared:/workspace/_shared:ro \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -e CLAUDE_CODE_OAUTH_TOKEN=*** -e FC_JOB_ID=<id> \
   banca-runner:<tag>
@@ -279,7 +295,9 @@ docker run -d --name fc-job-<id> \
 - **Autonomia**: dentro do runner o agente é instruído: "você está sozinho nesta máquina; porta ocupada é processo seu, resolva à vontade; nunca mate processo que você não criou" (cinto e suspensório — por construção não há vizinhos no netns dele).
 - **Invocação**: `claude -p "$(cat prompt.txt)" --model <modelo_do_run> --output-format stream-json --verbose > /workspace/transcript.jsonl`, com permissões liberadas para execução não-assistida (flag exata — `--dangerously-skip-permissions` vs. modo `--bare` + `--allowedTools` — é decisão do Spike S1). O container é a fronteira de segurança, não a permissão do CLI.
 - **Skill**: montada RO em `/workspace/skill`; o prompt manda ler `/workspace/skill/SKILL.md` primeiro e seguir literalmente (inclusive `devolutivas.md` e demais arquivos citados por ela). Não dependemos da descoberta automática de skills em modo headless — funciona com o tool Read, que sempre existe.
-- **Teardown em camadas**: (1) o agente roda `docker compose -p fc-job-<id> down -v` ao final; (2) o Job Controller sempre executa `docker compose -p fc-job-<id> down -v --remove-orphans`, desconecta e remove networks, remove o runner — mesmo em timeout/kill; (3) o janitor pega o que sobrar por prefixo/label.
+- **`_shared` das skills**: as skills `corrige-*` referenciam `../_shared/devolutivas-guide.md` por caminho relativo, então `$SKILLS_DIR/_shared` é montado RO em `/workspace/_shared` — o caminho relativo que elas já usam resolve dentro do runner sem editar skill nenhuma. Montar o `$SKILLS_DIR` inteiro resolveria também, mas exporia as outras 48 skills ao agente sem necessidade. Se o guia não existir no caminho, o Job Controller falha alto: a alternativa é o agente corrigir sem o guia e a devolutiva sair fora do padrão sem nenhum erro — falha silenciosa que só apareceria na revisão humana.
+- **Ciclo de vida do runner**: o entrypoint **não encerra** quando a carga retorna. Ele escreve `resultado.json` no job dir (exit code e horário do fim) e permanece vivo até o Job Controller mandar encerrar. É o que torna o retry corretivo do §7 possível: `docker exec` + `claude --resume` exigem o container ainda de pé, e um entrypoint que sai com o `claude -p` mataria o mecanismo por construção. Consequência para o Job Controller: o fim do job é detectado pelo marcador, não pela saída do container; o timeout e o `docker kill` continuam do lado do host, valendo mesmo se o marcador nunca aparecer.
+- **Teardown em camadas**: (1) o agente roda `docker compose -p fc-job-<id> down -v` ao final; (2) o Job Controller sinaliza o encerramento ao runner e sempre executa `docker compose -p fc-job-<id> down -v --remove-orphans`, desconecta e remove networks, remove o runner — mesmo em timeout/kill; (3) o janitor pega o que sobrar por prefixo/label. Como o runner fica vivo de propósito, a camada 2 é obrigatória, não otimização: sem ela todo job vira órfão.
 - **Limites**: runner com `--cpus 2 --memory 2.5g`. Stacks de aluno sem cap no MVP (risco aceito e documentado; duração anômala vira gatilho). Starts com jitter de 5–15s para não sincronizar tempestade de `npm install`.
 - **Concorrência**: dois limites existem conceitualmente (agentes Claude vs. stacks Docker), mas como runner = job, um único knob resolve: `max_paralelo` do run. Default 2, teto 4 com aviso (i5-12400F, WSL com 6 vCPU/10GB — ver §12 runbook).
 
@@ -299,9 +317,9 @@ Serve a plataforma FC (enquanto não há endpoints) e a segunda plataforma de cu
 1. Validação: `git ls-remote <url>` (timeout 30s, 2 tentativas); compara com `base_repo_url`; pina `commit_sha` (HEAD).
 2. Resolve skill via skills_map (ou usa a manual). Enfileira no pg-boss com prioridade FIFO.
 3. Worker pega o job → Job Controller cria `job_dir` em `$JOBS_DIR/<id>/` e escreve nele o `prompt.txt` (montado de `runner/prompt-template.md` + dados do job: aluno, desafio, skill, SHA, comando canônico de compose com `-p` e override, contexto de tentativa anterior se houver) e o override noports gerado; cria a network `fc-job-<id>_net`; sobe o runner (§8) e o conecta a ela.
-4. Entrypoint do runner: clona o repo em `/workspace/repo` (clone completo, timeout 120s; se falhar por tamanho, fallback `--depth 1` e marca `historico_nao_avaliado` — skills com critério de Git Flow precisam de histórico); `git checkout <commit_sha>`; `--recurse-submodules` tolerante a falha; invoca o `claude -p` com o `prompt.txt`.
+4. Entrypoint do runner: clona o repo em `/workspace/repo` (clone completo, timeout 120s; se falhar por tamanho, fallback `--depth 1` e marca `historico_nao_avaliado` — skills com critério de Git Flow precisam de histórico); `git checkout <commit_sha>`; `--recurse-submodules` tolerante a falha; invoca o `claude -p` com o `prompt.txt`; escreve `resultado.json` com o exit code e **permanece vivo** aguardando o sinal de encerramento (§8).
 5. Agente segue a skill: executa de verdade (ou análise estática, se a skill assim define), exercita caminho crítico, investiga ambiente vs. aluno, mede delta contra o base quando aplicável, escreve `dossie.json`.
-6. Job Controller detecta o fim, valida o dossiê (com retry corretivo, §7), roda o teardown, persiste correção + transcript + devolutiva-rascunho, aplica gatilhos programáticos (§12), aplica a política de revisão, emite SSE.
+6. Job Controller detecta o fim pelo `resultado.json`, valida o dossiê (com retry corretivo via `docker exec` no runner ainda vivo, §7), sinaliza o encerramento, roda o teardown, persiste correção + transcript + devolutiva-rascunho, aplica gatilhos programáticos (§12), aplica a política de revisão, emite SSE.
 
 ### 9.3 Revisão humana
 
@@ -546,11 +564,17 @@ Ativar o receptor de webhook (payloads reais → `webhook_payloads` → escrever
 
 O `corretor-desafios.md` atual mistura julgamento com infraestrutura. O v2 (escrito na F3) separa:
 
-**Sai do prompt — vira código:** numeração/ordem; fila, slots e exit 75; limite de paralelismo; sufixos de slug e colisão de arquivos em /tmp; `ss`/`lsof` e "de quem é a porta"; geração manual do override noports; proibições de `cleanDocker.sh`/prune (o agente nem tem como: teardown é do sistema, limpeza é do janitor); senha de sudo; persistência de dossiê em /tmp; agregação de gatilhos; teste de originalidade entre alunos (vira verificador pg_trgm + revisor).
+**Sai do prompt — vira código:** numeração/ordem; fila, slots e exit 75; limite de paralelismo; sufixos de slug e colisão de arquivos em /tmp; `ss`/`lsof` e "de quem é a porta"; geração manual do override noports; o `cleanDocker.sh` (aposentado — teardown é do sistema, limpeza é do janitor); senha de sudo; persistência de dossiê em /tmp; agregação de gatilhos; teste de originalidade entre alunos (vira verificador pg_trgm + revisor).
 
-**Fica — é julgamento:** a skill como única fonte de critérios (inclusive sobre o modo de avaliação, valendo contra a própria delegação); executar de verdade e exercitar o caminho crítico quando a skill manda; investigar ambiente vs. aluno antes de reprovar; delta contra o repo base com os números dos dois lados; nunca alterar o código do aluno para "fazer passar" nem escrever permanente no repo; linter em modo leitura + `git status` + restauração; "container ocioso não é container quebrado" (templates com `tail -f /dev/null`); dossiê honesto — dúvidas explícitas valem mais que conclusão inventada; regras de forma da devolutiva (tamanho, originalidade — agora também verificadas por código).
+**Fica — é julgamento:** a skill como única fonte de critérios (inclusive sobre o modo de avaliação, valendo contra a própria delegação) — **critério, não mecânica**: qual commit avaliar é do sistema, ver abaixo; executar de verdade e exercitar o caminho crítico quando a skill manda; investigar ambiente vs. aluno antes de reprovar; delta contra o repo base com os números dos dois lados; nunca alterar o código do aluno para "fazer passar" nem escrever permanente no repo; linter em modo leitura + `git status` + restauração; "container ocioso não é container quebrado" (templates com `tail -f /dev/null`); dossiê honesto — dúvidas explícitas valem mais que conclusão inventada; regras de forma da devolutiva (tamanho, originalidade — agora também verificadas por código).
 
-**Entra de novo:** "você está sozinho nesta máquina; porta ocupada é processo seu; nunca mate processo que você não criou"; o comando canônico de compose (com `-p fc-job-<id>` e o override noports) fornecido pronto no prompt; caminho e schema do `dossie.json` como último ato obrigatório; contexto da tentativa anterior quando existir (verificar nominalmente os pontos reprovados, calibrar tom); proibição de encerrar sem dossiê escrito.
+**Entra de novo:** "você está sozinho nesta máquina; porta ocupada é processo seu; nunca mate processo que você não criou"; **proibição explícita de limpeza global de Docker** — nada de `prune` de qualquer tipo, `rmi`, `rm`/`kill` de container, network ou volume que não pertença ao próprio job; o comando canônico de compose (com `-p fc-job-<id>` e o override noports) fornecido pronto no prompt; caminho e schema do `dossie.json` como último ato obrigatório; contexto da tentativa anterior quando existir (verificar nominalmente os pontos reprovados, calibrar tom); proibição de encerrar sem dossiê escrito.
+
+**Qual commit é avaliado é mecânica do sistema, não critério da skill.** Várias das 49 skills mandam "avaliar o estado atual da branch `main`" — frase escrita para o fluxo manual antigo, em que o clone acontecia no momento da correção e "atual" e "entregue" eram a mesma coisa. No sistema não são: o `commit_sha` é pinado no intake e o checkout é nele (§9.2 passo 1 e 4, §10.4). O prompt v2 declara essa precedência explicitamente — o repositório já está no commit avaliado, `fetch` e troca de ref são proibidos — e a declaração vale **contra** a delegação à skill neste ponto específico. A skill continua sendo a única fonte dos critérios; ela não é fonte de infraestrutura.
+
+Consequência assumida: as 49 skills **não são editadas**. A frase fica lá, obsoleta e inofensiva, porque o prompt a sobrepõe em um lugar só; editar 49 arquivos de conteúdo para corrigir uma frase de fluxo seria caro, arriscado e teria que ser refeito a cada skill nova. É a mesma escolha do `modo_avaliacao` (§17.6): o sistema se protege da skill em vez de reescrevê-la.
+
+Sobre a proibição de prune, a justificativa anterior estava errada e por isso ela havia saído: **o agente tem, sim, como executá-la.** O §8 monta o socket do Docker do host no runner, o que lhe dá poder total sobre o daemon — inclusive sobre os jobs vizinhos e sobre as imagens da máquina. Não é redundância com a regra dura 1 do `CLAUDE.md`, e o guard de `scripts/hooks/` também não cobre este caminho: ele intercepta o shell de quem desenvolve, não o processo dentro do runner. É cinto e suspensório sobre o janitor, na mesma lógica do "nunca mate processo que você não criou" — o isolamento por construção do §2.4 protege o que está no netns, não o daemon compartilhado.
 
 ## Apêndice B — Registro da revisão obrigatória do plano
 
@@ -567,6 +591,42 @@ Revisão feita em 06/08/2026, relendo o documento integral e checando: coerênci
 9. **Miúdos**: reenvio de aluno não exige mais veredito reprovado na anterior (§9.5); devolutiva vigente em reprocessamento definida (§5); correções órfãs pós-reboot ganham marcação explícita antes de voltar à fila (§10.12).
 
 Verificado e mantido sem alteração: numeração e dependências das fases; referências cruzadas (os casos 5, 7, 9, 10, 12 e 24–27 citados no aceite da F7 existem na matriz do §10); 25 min = 1500 s consistente; teto de paralelismo 2/4 coerente entre §8, F2 e G8; nenhum resquício de `cleanDocker.sh`, senha de sudo ou `docker system prune` como mecanismo do sistema.
+
+Revisão adicional em 07/08/2026 (v1.5), subindo para o plano as decisões arquiteturais que a quebra
+em fases tomou e que até aqui só existiam nos arquivos de `docs/fases/`. Nenhuma é nova: todas foram
+decididas com o repositório na frente e estavam registradas como decisão de fase. O motivo de subirem
+agora é a regra de precedência do CLAUDE.md — arquitetura muda no plano primeiro. Deixá-las "para
+quando a fase chegar" mantinha viva uma contradição entre plano e fase que o `tests/fases.test.ts`
+não detecta, porque ele compara status e dependências, não conteúdo:
+
+1. **`_shared` das skills não chegava ao runner** (§8). As 49 skills `corrige-*` referenciam
+   `../_shared/devolutivas-guide.md` por caminho relativo, mas o `docker run` montava só
+   `$SKILLS_DIR/<skill_slug>` — dentro do container o caminho não resolvia, e toda correção rodaria
+   sem o guia de devolutivas, falhando em silêncio até a revisão humana. Passa a montar
+   `$SKILLS_DIR/_shared` em `/workspace/_shared:ro`, com falha alta se o arquivo não existir
+   (decisão D1 da F3).
+2. **O runner morria antes do retry corretivo** (§8, §9.2 × §7). O §7 exige `docker exec` +
+   `claude --resume` no runner ainda vivo; o §9.2 descrevia um entrypoint que invocava o `claude -p`
+   e saía, o que mata o mecanismo por construção. O entrypoint passa a escrever `resultado.json` e a
+   permanecer vivo até o sinal do Job Controller, que detecta o fim pelo marcador e não pela saída do
+   container. Como efeito, a camada 2 do teardown deixa de ser garantia e vira obrigação (decisão D10
+   da F2).
+3. **O run não tinha saída de `ativo`** (§5, §6.1 novo). O enum de `runs.status` previa `finalizado`,
+   `pausado` e `cancelado`, mas nada os alcançava — e como o §10.21 recusa criar run com um ativo, o
+   sistema aceitaria exatamente um run na vida. `finalizado` passa a ser automático quando todo o lote
+   atinge terminal de fato; `pausado`, retomado e `cancelado` são humanos. Não existe "finalizar" como
+   ação humana: encerrar com pendência é cancelar, e o nome tem que dizer a verdade (§1, meta 3).
+4. **A proibição de prune volta ao prompt do corretor** (Apêndice A). Ela havia saído com a
+   justificativa de que "o agente nem tem como" — errada: o §8 monta o socket do host no runner, o que
+   lhe dá poder total sobre o daemon. Não é redundância com a regra dura 1 nem com o guard de
+   `scripts/hooks/`, que intercepta o shell do desenvolvedor e não o processo dentro do runner
+   (decisão D2 da F3).
+5. **"Estado atual da branch main" das skills perde para o SHA pinado** (Apêndice A). A frase existe em
+   várias das 49 skills e foi escrita para o fluxo manual, em que "atual" e "entregue" coincidiam; no
+   sistema não coincidem (§9.2, §10.4). O prompt v2 declara a precedência e proíbe `fetch`/troca de
+   ref, valendo contra a delegação à skill **neste ponto**: ela é fonte de critério, não de
+   infraestrutura. As skills não são editadas — mesma escolha do `modo_avaliacao` (§17.6), em que o
+   sistema se protege da skill em vez de reescrever 49 arquivos de conteúdo (decisão D8 da F3).
 
 Revisão adicional em 07/08/2026 (v1.4), motivada por uma constatação do usuário no primeiro dia de
 desenvolvimento: o §13 descrevia a *intenção* de cada fase, não um plano executável — faltavam tarefas,
