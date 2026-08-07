@@ -30,13 +30,14 @@ apps/web/          # SPA Vue
 apps/api/          # NestJS (REST, SSE, fila, Job Controller, janitor)
 packages/shared/   # tipos de domínio, dossie.schema.json, parser de bloco
 runner/            # Dockerfile, entrypoint.sh, prompt-template.md
-skills-correcao/   # skills corrige-* (fonte dos critérios de correção — conteúdo, não código)
 docs/              # project-plan.md, STATUS.md, INTEGRATION.md,
                    # spikes.md (nasce na F0), runbook.md (nasce na F7)
 docs/fases/        # README.md (índice) + F0..F9 — plano executável de cada fase
 scripts/           # utilitários; scripts/hooks/ = guards executáveis das regras duras
 compose.yaml       # Postgres de desenvolvimento
 ```
+
+As skills `corrige-*` **não moram nesta árvore** (plan §4). São conteúdo com ciclo de vida próprio — mudam quando o enunciado do desafio muda, não quando o sistema muda — e ficam em diretório externo apontado por `SKILLS_DIR` no `.env`, sem cópia, symlink ou submódulo. O Job Controller monta `$SKILLS_DIR/<skill_slug>` e `$SKILLS_DIR/_shared` como `:ro` no runner (§8).
 
 ## Comandos
 

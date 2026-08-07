@@ -54,10 +54,11 @@ apps/web/          # SPA Vue
 apps/api/          # NestJS (REST, SSE, fila, Job Controller, janitor)
 packages/shared/   # tipos de domínio, dossie.schema.json, parser de bloco
 runner/            # Dockerfile, entrypoint.sh, prompt-template.md
-skills-correcao/   # skills corrige-* (critérios de correção — conteúdo, não código)
-docs/              # plano, status, integração, spikes, runbook
+docs/              # plano, fases, status, integração, spikes, runbook
 compose.yaml       # Postgres de desenvolvimento
 ```
+
+As skills `corrige-*` ficam **fora do repositório**, em um diretório apontado por `SKILLS_DIR` no `.env` — elas mudam quando o enunciado do desafio muda, não quando o sistema muda, e por isso têm versionamento próprio. O runner as recebe montadas como somente-leitura ([`docs/project-plan.md`](docs/project-plan.md) §4 e §8).
 
 ## Comandos
 
