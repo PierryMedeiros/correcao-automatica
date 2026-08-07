@@ -24,7 +24,7 @@ construção" (§2.4) e "nada destrutivo global" (§2.5) em código executável.
       (a flag de permissão decidida ali só é usada na F3, mas o Dockerfile da F2.1 já instala o CLI)
 - [ ] `.env` preenchido com `SKILLS_DIR`, `JOBS_DIR`, `RUNNER_IMAGE` e `CLAUDE_CODE_OAUTH_TOKEN`
       (pendência humana §17.3) — conferir com `test -d "$SKILLS_DIR"` e `test -d "$JOBS_DIR"`
-- [ ] `$SKILLS_DIR` tem ao menos uma skill `corrige-*` real para montar `:ro` no teste
+- [ ] `$SKILLS_DIR` tem ao menos uma skill `corrige-*` real e o `_shared/devolutivas-guide.md` que as skills citam — os dois são montados `:ro` (§8) e a ausência de qualquer um aborta o job
 - [ ] Docker Engine acessível sem sudo pelo usuário do host e gid do socket conhecido:
       `stat -c %g /var/run/docker.sock`
 - [ ] Disco com ≥ 15 GB livres (abaixo disso o janitor já nasce alertando, §10.19): `df -h /`
@@ -38,13 +38,13 @@ construção" (§2.4) e "nada destrutivo global" (§2.5) em código executável.
 | Network externa criada **antes** do runner (elimina a corrida) | §8, Apêndice B (06/08) item 1 | A ordem da F2.4 é obrigatória: network → runner → conecta → start |
 | Quem clona e invoca é o entrypoint; o controller só prepara arquivos antes do `docker run` | §9.2 passos 3–4, Apêndice B (06/08) item 5 | F2.2 é do entrypoint, F2.3/F2.4 são do controller — não misturar responsabilidade |
 | Teardown em 3 camadas, sempre executado (inclusive em timeout/kill) | §8 | F2.6 roda a camada 2 em `finally`; a camada 3 é o janitor (F2.7) |
-| Retry corretivo do dossiê acontece com o runner **ainda vivo** | §7, Apêndice B (06/08) item 6 | O entrypoint não encerra o container quando a carga retorna (F2.2, D10); F2.5 detecta o fim pelo marcador e deixa o ponto de extensão entre coleta e teardown, pronto para a F3 |
+| Retry corretivo do dossiê acontece com o runner **ainda vivo** | §7, §8 (ciclo de vida do runner), §9.2 passos 4 e 6, Apêndice B (06/08) item 6 e v1.5 item 2 | O entrypoint escreve `resultado.json` e **não** encerra o container (F2.2); F2.5 detecta o fim pelo marcador e deixa o ponto de extensão entre coleta e teardown, pronto para a F3 |
 | Job dir órfão × referenciado são duas classes de retenção | §11, §12, Apêndice B v1.3 item 3 | O janitor consulta `correcoes` antes de apagar; dir de correção `falhou` fica 14 dias |
 | Nada destrutivo global; limpeza sempre por label/prefixo | §2.5, §12, regra dura 1 | Todo `docker create`/`network create` leva `fc.job=<id>`; janitor filtra por label |
 | Limites do runner e jitter de start | §8 | F2.4 aplica `--cpus 2 --memory 2.5g` e jitter de 5–15s; o teto de paralelismo é knob do run (F4) |
 | Timeout efetivo = `skills_map.timeout_s ?? config.timeout_job_padrao_s` | §5, §10.9 | F2.5 lê o override da skill e o default de `config`, ambos gravados pela F1 — nenhum literal de timeout no código |
 | Log do entrypoint vai para o job dir | §12 | F2.2 escreve `runner.log` dentro de `/workspace` |
-| Skill montada `:ro` a partir de `$SKILLS_DIR`, sem cópia nem symlink | §4, §8, Apêndice B v1.3 item 6 | F2.4 monta `$SKILLS_DIR/<skill_slug>:/workspace/skill:ro` e aborta se o caminho não existir |
+| Skill e `_shared` montados `:ro` a partir de `$SKILLS_DIR`, sem cópia nem symlink | §4, §8, Apêndice B v1.3 item 6 e v1.5 item 1 | F2.4 monta `$SKILLS_DIR/<skill_slug>:/workspace/skill:ro` e `$SKILLS_DIR/_shared:/workspace/_shared:ro`, abortando se qualquer um dos caminhos não existir |
 
 ## Decisões a tomar nesta fase
 
@@ -59,7 +59,7 @@ construção" (§2.4) e "nada destrutivo global" (§2.5) em código executável.
 | D7 | Como o fallback shallow (§10.17) chega ao backend, se `historico_nao_avaliado` é campo do dossiê (F3) e gatilho do backend (F7)? | marcador `clone.json` no job dir, escrito pelo entrypoint · variável de ambiente para o agente · o agente descobre sozinho | `clone.json`: o gatilho é do backend e não pode depender do que o agente escreveu no dossiê. A F3 faz o prompt refletir o marcador no campo do dossiê |
 | D8 | §12 manda o janitor podar imagens dangling e cache de build, mas a regra dura 1 — e o guard `scripts/hooks/bloqueia-prune-docker.sh` — proíbem `docker image/builder prune` em qualquer forma, mesmo filtrada | remoção enumerada (`docker images -q -f dangling=true` + `docker rmi`) e cache de build fora do janitor, virando item do runbook (F7) · abrir exceção na regra dura 1 e no guard · não podar nada | Remoção enumerada + cache no runbook. É contradição real entre §12 e a regra dura 1: ao implementar, alinhar o texto do §12 e registrar no Apêndice B |
 | D9 | O janitor da F2 já liga `config.pausa_global` no limiar de 5 GB (§10.19), se pausa global é entrega da F4? | sim, escreve o registro e a notificação; a F4 implementa quem obedece · só loga, e a F4 faz tudo | Escrever o registro: o §12 dá o monitoramento de disco ao janitor, e `pausa_global` é uma linha em `config` (tabela da F1). É **objeto, nunca booleano** — `{ ativa, motivo, desde, tentativas }`, com `motivo = "disco"` neste caminho. Quem obedece ao registro é a F4 |
-| D10 | O entrypoint pode encerrar quando a carga retorna? O §9.2 passo 4 descreve o entrypoint invocando e saindo, mas o §7 exige `docker exec` + `claude --resume` no runner **ainda vivo** | (a) o entrypoint escreve o marcador `resultado.json` no job dir e permanece vivo até o sinal de encerramento do Job Controller · (b) o entrypoint sai e o controller detecta o fim pela saída do container — mata o retry corretivo por construção · (c) subir um segundo container para o retry, perdendo a sessão do `--resume` | (a). O fato já foi registrado na F0 D6 ("o entrypoint **não pode** encerrar quando o `claude -p` retorna"), e (b) torna o §7 inexequível. Consequência: o fim do job passa a ser detectado por marcador (F2.2, F2.5) e o teardown passa a sinalizar o encerramento (F2.6); o timeout e o `docker kill` continuam do lado do host. É contradição real entre §7 e §9.2 — ao adotar, as duas seções ganham uma linha e a mudança vai ao **Apêndice B antes de a F2 começar** |
+| ~~D10~~ | Se o entrypoint pode encerrar quando a carga retorna | — | **Resolvida no plano (v1.5, §8 e §9.2)**: não pode. Escreve `resultado.json` e permanece vivo até o sinal do Job Controller, que detecta o fim pelo marcador. O número fica reservado — o arquivo o referencia |
 
 ## Etapas
 
@@ -149,9 +149,9 @@ construção" (§2.4) e "nada destrutivo global" (§2.5) em código executável.
 
 - [ ] Wrapper de Docker com `execFile` (nunca string de shell: URL de repo e nome de aluno são dado externo), timeout em toda chamada e log com `job_id`
 - [ ] `docker network create fc-job-<id>_net --label fc.job=<id>` **antes** de qualquer container (§8, Apêndice B (06/08) item 1)
-- [ ] `docker create --name fc-job-<id> --label fc.job=<id> --cpus 2 --memory 2.5g` com os mounts do §8 (job dir → `/workspace`; `$SKILLS_DIR/<skill_slug>` → `/workspace/skill:ro`; `/var/run/docker.sock`) e env `CLAUDE_CODE_OAUTH_TOKEN`, `FC_JOB_ID`
+- [ ] `docker create --name fc-job-<id> --label fc.job=<id> --cpus 2 --memory 2.5g` com os mounts do §8 (job dir → `/workspace`; `$SKILLS_DIR/<skill_slug>` → `/workspace/skill:ro`; `$SKILLS_DIR/_shared` → `/workspace/_shared:ro`; `/var/run/docker.sock`) e env `CLAUDE_CODE_OAUTH_TOKEN`, `FC_JOB_ID`
 - [ ] `docker network connect fc-job-<id>_net fc-job-<id>` e só então `docker start` (D6)
-- [ ] Abortar antes de criar qualquer recurso se `$SKILLS_DIR/<skill_slug>` não existir — mount de caminho inexistente cria diretório vazio e a correção rodaria sem critérios
+- [ ] Abortar antes de criar qualquer recurso se `$SKILLS_DIR/<skill_slug>` ou `$SKILLS_DIR/_shared/devolutivas-guide.md` não existir — mount de caminho inexistente cria diretório vazio, e a correção rodaria sem critérios ou sem o guia de devolutivas, falhando em silêncio até a revisão humana (§8)
 - [ ] Jitter aleatório de 5–15s antes do start, com relógio e aleatório injetáveis para o teste (§8)
 - [ ] Nunca logar o valor de `CLAUDE_CODE_OAUTH_TOKEN` (regra dura 5)
 
@@ -326,6 +326,6 @@ A preencher durante a fase.
 
 - **Iniciada em:** AAAA-MM-DD
 - **Concluída em:** AAAA-MM-DD
-- **Decisões tomadas:** (D1–D10, com link para STATUS.md / Apêndice B quando arquitetural; D6, D8 e D10 mudam §8/§9.2/§12 → Apêndice B)
+- **Decisões tomadas:** (D1–D9, com link para STATUS.md / Apêndice B quando arquitetural; D6 e D8 ainda mudam §8/§12 → Apêndice B; D10 já subiu ao plano em v1.5)
 - **Divergências do plano:** (o que divergiu, por quê, e onde foi registrado)
 - **Evidência dos aceites:** (saída de comando, resultado de teste)

@@ -4,7 +4,7 @@
 > **Estimativa:** 2–3 dias úteis (plan §13)
 > **Depende de:** F1 (banco) · F2 (Job Controller) · F3 (correção real)
 > **Destrava:** F5 (a API enfileira e lê estado) · F7 (resiliência que o E2E exercita)
-> **Seções do plano:** §6 (máquina de estados) · §5 (`submissoes`, `correcoes`, `runs`, `eventos`, `notificacoes`, `config`) · §9.2 passo 6 · §9.5 · §12 (pausa global, eventos, cron) · §10.5, 10.7, 10.9, 10.10, 10.11, 10.12, 10.20, 10.21, 10.28 · Apêndice B (06/08) itens 7 e 9 · Apêndice B v1.3 item 1
+> **Seções do plano:** §6 e §6.1 (máquina de estados) · §5 (`submissoes`, `correcoes`, `runs`, `eventos`, `notificacoes`, `config`) · §9.2 passo 6 · §9.5 · §12 (pausa global, eventos, cron) · §10.5, 10.7, 10.9, 10.10, 10.11, 10.12, 10.20, 10.21, 10.28 · Apêndice B (06/08) itens 7 e 9 · Apêndice B v1.3 item 1
 
 ## Objetivo
 
@@ -39,7 +39,7 @@ de deixar submissão em `corrigindo`, e o run acaba: lote inteiro terminal vira 
 | Dúvida, gatilho ou veredito `inconclusivo` forçam revisão, contra qualquer política | §2.7, §6 | A regra de destino pós-correção é um `OR`, e a política é só um dos termos |
 | Na pausa, job em andamento termina; job novo não inicia | §12 | `boss.stop({ wait: true })` no shutdown e checagem de pausa no início do handler |
 | Correção órfã pós-reboot é marcada antes de voltar à fila, e o retorno consome retry | §10.12, Apêndice B (06/08) item 9 | A marcação é da rotina da F2 (F2.8); a F4 só transiciona a submissão depois dela. Sem marcação o loop é infinito; com ela, 3 reboots seguidos terminam em `erro` |
-| 1 run ativo por vez no MVP, com `runs.status` em `ativo, pausado, finalizado, cancelado` | §5 (`runs.status`), §10.21 | A invariante é do domínio/banco e vale sobre `ativo`; sem transição para fora de `ativo` (F4.7) o sistema aceitaria um único run na vida. A UI só reflete (F6) |
+| 1 run ativo por vez no MVP, com `runs.status` em `ativo, pausado, finalizado, cancelado` | §5 (`runs.status`), §6.1, §10.21 | A invariante é do domínio/banco e vale sobre `ativo`; sem transição para fora de `ativo` (F4.7) o sistema aceitaria um único run na vida. A UI só reflete (F6) |
 | Logs pino com `job_id`/`submissao_id` em toda linha | §12 | O logger nasce no bootstrap (F4.0) e é a base da evidência de todo aceite desta fase |
 | Job dir referenciado por correção fica 14 dias, inclusive `falhou`/`timeout` | §11, Apêndice B v1.3 item 3 | Nenhum caminho de erro desta fase apaga job dir ou transcript |
 | Handler de fila é idempotente por obrigação | CLAUDE.md, skill `implementar-fase` | Todo handler faz claim por estado antes de qualquer efeito |
@@ -204,7 +204,7 @@ de deixar submissão em `corrigindo`, e o run acaba: lote inteiro terminal vira 
 - [ ] `substituir`: com submissão ativa de (aluno_email, projeto, fase), na mesma transação transicionar a anterior para `substituida` e inserir a nova em `recebida`; kill + teardown depois do commit se a anterior estava `corrigindo` (§10.5)
 - [ ] Tratar violação do índice único parcial (SQLSTATE 23505) como corrida: repetir a transação uma vez e, persistindo, devolver `SubmissaoAtivaDuplicadaError` tipado
 - [ ] Invariante de 1 run ativo (§10.21) conforme D8, com erro de domínio `RunAtivoExistenteError`
-- [ ] Transições de `runs.status` (§5): `finalizado` **automático** quando toda submissão do lote está em estado terminal do §6 (`enviada`, `cancelada`, `substituida`), avaliado ao fim de cada transição de submissão; `cancelado`, `pausado` e retomado por ação humana, cada um gravando evento
+- [ ] Transições de `runs.status` conforme a tabela do §6.1: `finalizado` **automático** quando toda submissão do lote está em estado terminal do §6 (`enviada`, `cancelada`, `substituida`), avaliado ao fim de cada transição de submissão; `cancelado`, `pausado` e retomado por ação humana, cada um gravando evento
 - [ ] Submissão parada em `erro`, `sem_skill` ou `link_invalido` é **ativa** (§5) e mantém o run aberto: a saída é resolvê-la (reprocessar/enviar) ou cancelar o run — não existe finalização "por desistência" silenciosa
 - [ ] Run `pausado` não recebe job novo e sai da invariante do §10.21 (o índice parcial só olha `ativo`), então `retomar` recusa com `RunAtivoExistenteError` se já houver outro run `ativo`
 - [ ] Escrever o cenário R4 (`scripts/resiliencia/r4-substituicao.ts`) na convenção da F4.1: entrega duplicada chegando com a anterior em `corrigindo`, evidência do runner morto e da anterior em `substituida`

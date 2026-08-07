@@ -31,6 +31,7 @@ devolutiva-rascunho no formato da skill, persistidos e auditáveis.
 | Decisão | Onde está | Consequência prática nesta fase |
 |---|---|---|
 | A skill é a única fonte de critérios; o prompt só define conduta | §2.3, Apêndice A | O template v2 não contém critério de correção nenhum; aponta para `/workspace/skill/SKILL.md` |
+| A skill é fonte de **critério**, não de mecânica: qual commit avaliar é do sistema | §9.2, §10.4, Apêndice A, Apêndice B v1.5 item 5 | O v2 declara que o repositório já está no commit avaliado e proíbe `fetch`/troca de ref, vencendo a frase "estado atual da branch `main`" que várias skills trazem do fluxo manual |
 | Sem descoberta automática de skill em headless — o agente lê pelo tool Read | §8 | Primeira instrução do prompt: ler `SKILL.md` e seguir literalmente, inclusive os arquivos que ela mandar ler |
 | O dossiê é o único contrato agente → sistema; o backend nunca interpreta prosa | §2.6, §7 | A devolutiva vai dentro de `devolutiva_rascunho`, não no stdout; ausência de dossiê é falha, não interpretação |
 | Retry corretivo via `docker exec` + `claude --resume`, **antes** do teardown, sem consumir `retry_n` | §7, Apêndice B (06/08) item 6 | Ordem obrigatória no fechamento: coleta → valida → (exec/resume) → valida → teardown |
@@ -41,19 +42,21 @@ devolutiva-rascunho no formato da skill, persistidos e auditáveis.
 | Contexto de tentativa anterior: critérios não mudam, verificação nominal + calibragem de tom | §9.5, Apêndice A | Bloco opcional do prompt, montado só quando `anterior_id` existe |
 | `historico_nao_avaliado` quando o clone caiu no fallback shallow | §7, §9.2, §10.17 | O entrypoint (F2) sinaliza; o prompt obriga o agente a propagar o campo no dossiê |
 | Tudo que virou código sai do prompt (slots, exit 75, `ss`/`lsof`, override manual, sudo) | Apêndice A | A remoção é verificável por `grep` contra `docs/legado/corretor-desafios.md` |
+| `$SKILLS_DIR/_shared` montado RO em `/workspace/_shared`, com falha alta se o guia não existir | §8, Apêndice B v1.5 item 1 | O `../_shared/devolutivas-guide.md` que as 49 skills citam resolve dentro do runner sem editar skill nenhuma |
+| A proibição de limpeza global de Docker **fica** no prompt: o socket montado dá ao agente o poder | Apêndice A, Apêndice B v1.5 item 4 | Uma linha explícita no v2 — o guard de `scripts/hooks/` intercepta o shell do desenvolvedor, não o processo dentro do runner |
 
 ## Decisões a tomar nesta fase
 
 | # | Pergunta em aberto | Opções | Recomendação |
 |---|---|---|---|
-| D1 | As 49 skills referenciam `../_shared/devolutivas-guide.md` (150 ocorrências), mas o §8 monta só `$SKILLS_DIR/<skill_slug>` — dentro do runner esse caminho não existe | (a) montar também `$SKILLS_DIR/_shared` em `/workspace/_shared:ro`; (b) montar `$SKILLS_DIR` inteiro RO; (c) copiar o guia para o job dir | (a) — uma linha no `docker run`, preserva o caminho relativo que as skills já usam, mantém RO e não expõe as outras 48 skills ao agente. Altera o §8 → registrar no Apêndice B |
-| D2 | O Apêndice A tira do prompt as proibições de prune "porque o agente nem tem como" — mas o §8 monta o socket do host no runner, então ele tem | (a) manter uma linha de proibição explícita (prune/`rm`/`rmi`/`kill` fora do próprio job) no v2; (b) confiar no isolamento | (a) — custo de uma linha, na mesma lógica do "nunca mate processo que você não criou" do §8. A regra dura 1 vale para o sistema todo, e o guard de `scripts/hooks/` cobre o shell do desenvolvedor, não o runner. Corrige a justificativa do Apêndice A → Apêndice B |
+| ~~D1~~ | Como o `_shared/` das skills chega ao runner | — | **Resolvida no plano (v1.5, §8)**: `$SKILLS_DIR/_shared` montado RO em `/workspace/_shared`. Ver a linha correspondente em "Decisões do plano que esta fase materializa". O número fica reservado — o arquivo o referencia |
+| ~~D2~~ | Se a proibição de limpeza global de Docker fica no prompt | — | **Resolvida no plano (v1.5, Apêndice A)**: fica, e a justificativa antiga ("o agente nem tem como") estava errada. O número fica reservado — o arquivo o referencia |
 | D3 | De onde vem o `--model` na F3, se o run só é orquestrado na F4 | (a) campo `modelo` no payload de entrada do Job Controller, preenchido pelo harness; (b) ler `runs.modelo` já agora | (a) — a F4 passa a preencher o mesmo campo a partir de `runs.modelo` sem mudar assinatura |
 | D4 | O que a F3 persiste no banco | (a) só artefatos no job dir; (b) linha em `correcoes` + `devolutivas.texto_agente` | (b) — as tabelas existem desde a F1, o aceite pede veredito e devolutiva, e persistir agora evita reescrever o fechamento na F4. Transições de estado, gatilhos e política de revisão continuam fora |
 | D5 | Onde mora o validador do dossiê e o que acontece com o que a F2 usou no job fake | (a) `packages/shared` (schema + validador puro), API só orquestra; (b) validador dentro da API | (a) — o §7 já nomeia `packages/shared/dossie.schema.json`, e F5/F6 vão querer os tipos. O que a F2 usou como stub é substituído nesta fase |
 | D6 | Como o retry corretivo obtém o `session_id` para o `--resume` | (a) parsear o evento inicial do `transcript.jsonl`; (b) fixar `--session-id <uuid>` gerado pelo sistema na invocação, se o CLI aceitar | (b) quando o S1 confirmar o suporte (determinístico, não depende de formato de transcript), com (a) como fallback. Registrar o que valeu em `docs/spikes.md` |
 | D7 | Captura de custo/uso por correção, que o §15 pede medir e o §5 não tem onde guardar | (a) não persistir agora — o dado fica no transcript; (b) criar coluna em `correcoes` (muda o §5) | (a) — o transcript é auditável e a agregação é F8; coluna nova exigiria mudar o §5 antes |
-| D8 | Skills mandam "avaliar o estado atual da branch main", mas o §9.2 faz checkout no SHA pinado — e o prompt legado diz que a skill vence | (a) o prompt v2 declara que o repositório já está no commit avaliado e proíbe `fetch`/troca de ref, com precedência sobre a skill nesse ponto específico; (b) deixar o agente decidir | (a) — o §10.4 já decidiu que o SHA pinado é o que vale; a precedência da skill continua valendo para critério, não para infraestrutura de checkout |
+| ~~D8~~ | Se "estado atual da branch main" das skills vence o SHA pinado | — | **Resolvida no plano (v1.5, Apêndice A)**: não vence. O prompt v2 declara a precedência do SHA pinado e proíbe `fetch`/troca de ref; a skill é fonte de critério, não de infraestrutura. As 49 skills não são editadas. O número fica reservado — o arquivo o referencia |
 
 ## Etapas
 
@@ -88,24 +91,24 @@ devolutiva-rascunho no formato da skill, persistidos e auditáveis.
 - [ ] Fechar a portagem com uma passada de conferência lista × template, item por item, registrando no Registro de execução qualquer item do Apêndice A que tenha sido interpretado de forma não óbvia
 - [ ] Instruir o teardown de camada 1 do agente: `docker compose -p fc-job-<id> down -v` ao final (§8)
 - [ ] Instruir a propagação de `historico_nao_avaliado`, `container_name_fixo_no_compose`, `arquivos_auxiliares` e submodules quebrados para os campos correspondentes do dossiê
-- [ ] Declarar que o repositório já está no commit avaliado, proibindo `fetch`/troca de ref (D8), e que o veredito `inconclusivo` com `motivo_inconclusivo` é a saída correta quando o repositório não corresponde à skill (§10.8)
-- [ ] Aplicar D2 (linha de proibição de limpeza global) se a decisão for (a)
+- [ ] Declarar que o repositório já está no commit avaliado, proibindo `fetch`/troca de ref, com precedência explícita sobre qualquer menção da skill a "estado atual da branch `main`" (Apêndice A, §9.2, §10.4) — e que o veredito `inconclusivo` com `motivo_inconclusivo` é a saída correta quando o repositório não corresponde à skill (§10.8)
+- [ ] Portar a proibição de limpeza global de Docker do Apêndice A: nada de `prune` de qualquer tipo, `rmi`, `rm`/`kill` de container, network ou volume fora do próprio job
 - [ ] Marcar os placeholders com uma sintaxe única e greppável (ex.: `{{aluno_nome}}`), para que o teste do montador consiga provar que nenhum sobrou
 
 **Testes:** nenhum unitário do conteúdo — o texto é conteúdo, não código. A verificação é o `grep` do aceite A6 e o comportamento observado em G1–G3.
 
 **Pronto quando:** o `grep` da lista "sai" não encontra ocorrência e o template cabe em uma leitura sem repetir critério de skill nenhuma.
 
-### F3.3 — Montagem do `prompt.txt` e da skill no runner
+### F3.3 — Montagem do `prompt.txt`
 
-**Entrega:** o Job Controller escreve, no job dir, um `prompt.txt` completo e sem segredo, e o runner enxerga a skill e o guia compartilhado.
+**Entrega:** o Job Controller escreve, no job dir, um `prompt.txt` completo e sem segredo, apontando para a skill e o guia que a F2.4 monta.
 
-**Arquivos:** módulo de montagem do prompt onde a F2 colocou o Job Controller; ajuste do `docker run` (§8)
+**Arquivos:** módulo de montagem do prompt onde a F2 colocou o Job Controller
 
 **Tarefas**
 
 - [ ] Resolver `skill_slug` → `$SKILLS_DIR/<skill_slug>` e **falhar antes do `docker run`** se `SKILL.md` não existir (falha alta e barata, no espírito do seed da F1)
-- [ ] Aplicar D1: montar `$SKILLS_DIR/_shared` em `/workspace/_shared:ro` e falhar alto se `devolutivas-guide.md` não existir
+- [ ] Conferir que o `docker create` da F2.4 já monta `$SKILLS_DIR/_shared` em `/workspace/_shared:ro` e aborta se o guia não existir (§8); se a F2 tiver sido implementada sem isso, o conserto é lá — esta fase só depende do mount
 - [ ] Preencher o template com os dados do job: aluno, projeto+fase, skill, `commit_sha`, caminho do clone (`/workspace/repo`), caminho do dossiê (`/workspace/dossie.json`)
 - [ ] Montar o comando canônico de compose com `-p fc-job-<id>`, o compose do aluno e o override noports gerado pela F2, nos caminhos como vistos de dentro do runner
 - [ ] Garantir que nenhum valor de `.env` (token, `DATABASE_URL`) seja interpolado no prompt — regra dura 5
@@ -195,7 +198,7 @@ devolutiva-rascunho no formato da skill, persistidos e auditáveis.
 
 | # | Caso | Como esta fase trata | Onde é verificado |
 |---|---|---|---|
-| 4 | Aluno dá push após o intake | Prompt declara o SHA avaliado e proíbe `fetch`/troca de ref (D8) | Leitura do template + A6 |
+| 4 | Aluno dá push após o intake | Prompt declara o SHA avaliado e proíbe `fetch`/troca de ref, vencendo a frase "branch main" das skills (Apêndice A) | Leitura do template + A6 |
 | 7 | Dossiê ausente / JSON inválido | Retry corretivo único via `--resume` antes do teardown (F3.5) | A4, A5 |
 | 8 | Veredito `inconclusivo` | Enum no schema + `motivo_inconclusivo` obrigatório + instrução de quando usá-lo | Suite do validador (F3.1) |
 | 15 | `container_name:` fixo no compose | Prompt obriga registrar em `container_name_fixo_no_compose` | Dossiê de G1/G2 |
@@ -213,7 +216,7 @@ devolutiva-rascunho no formato da skill, persistidos e auditáveis.
 | A3 | G3 (skill estática) corrigido sem subir container | mesmo comando com G3 | `execucao.executou: false`, `comandos_docker: []`; `docker ps -a --filter label=fc.job=<id>` mostra só o runner |
 | A4 | Retry corretivo funciona e não consome retry | forçar dossiê inválido (arquivo truncado antes do fechamento) | Log com `docker exec` + `claude --resume`, 2ª validação verde, `retry_n` inalterado, teardown só depois |
 | A5 | Dossiê inválido nas duas tentativas → correção `falhou` com rastro | segundo dossiê também inválido | `correcoes.status = falhou`, `erro_resumo` com o erro do validador, job dir preservado (§11) |
-| A6 | Template v2 sem nada da lista "sai" do Apêndice A | `grep -Eni 'cleanDocker\|system prune\|fc-docker-run\|exit 75\|lsof\|ss -ltnp\|sudo' runner/prompt-template.md` | Zero ocorrências (exceto a linha de D2, se adotada) |
+| A6 | Template v2 sem nada da lista "sai" do Apêndice A | `grep -Eni 'cleanDocker\|system prune\|fc-docker-run\|exit 75\|lsof\|ss -ltnp\|sudo' runner/prompt-template.md` | Zero ocorrências de `cleanDocker`, `exit 75`, `lsof`, `ss -ltnp` e `sudo`; `prune` aparece **somente** na linha de proibição que o Apêndice A manda incluir |
 | A7 | Nenhum segredo no prompt | `grep -i 'oauth\|token' <job_dir>/prompt.txt` | Zero ocorrências |
 | A8 | Contexto de tentativa anterior entra só quando existe | gerar `prompt.txt` com e sem `anterior_id` | Diff limitado ao bloco de tentativa anterior |
 | A9 | `pnpm lint` e `pnpm test` verdes com as suites do validador, do montador e do `ClaudeCliExecutor` | `pnpm lint && pnpm test` | Saída verde |
@@ -244,7 +247,7 @@ ajuste de redação sem mudar comportamento), teste de campo trivial do schema.
 - **Flag de permissão indefinida.** Se o S1 não fechou qual é (§8), a F3 para. Não escolher `--dangerously-skip-permissions` por conta própria: é decisão do spike, e a fronteira de segurança é o container.
 - **`stream-json` sem `--verbose` (§4)** falha ou devolve transcript vazio — e o sintoma aparece só no fechamento, quando não há `session_id` nem dossiê.
 - **Inverter a ordem do fechamento.** A F2 entrega teardown garantido; é natural que ele viva num `finally`. Se rodar antes da validação, o `--resume` do §7 fica impossível e o sintoma é "retry corretivo nunca funciona", sem erro visível.
-- **`_shared/devolutivas-guide.md` ausente no runner (D1).** O agente segue sem o guia e a devolutiva sai fora do padrão sem nenhum erro — falha silenciosa que só aparece na revisão humana. Por isso a montagem falha alto se o arquivo não existir.
+- **`_shared/devolutivas-guide.md` ausente no runner (§8).** O agente segue sem o guia e a devolutiva sai fora do padrão sem nenhum erro — falha silenciosa que só aparece na revisão humana. Por isso a montagem falha alto se o arquivo não existir.
 - **Prompt inflado.** O legado tem 265 linhas e metade vira código. Template grande gasta contexto, dilui a skill e reintroduz critério duplicado — exatamente o que o §2.3 proíbe.
 - **Mudança de template ou de modelo muda a régua** (§15). Toda alteração no v2 obriga a rodar G1–G3 de novo; é o detector de regressão de comportamento do agente (§14).
 - **Custo real por rodada.** Cada execução de golden repo consome o plano Max, e a pausa automática por limite (§10.10) só existe na F4 — aqui o limite estourado aparece como falha crua do CLI. Rodar G1–G3 em série, não em lote.
@@ -276,6 +279,6 @@ A preencher durante a fase.
 
 - **Iniciada em:** AAAA-MM-DD
 - **Concluída em:** AAAA-MM-DD
-- **Decisões tomadas:** (D1–D8, com link para STATUS.md; D1 e D2 mudam o §8/Apêndice A → Apêndice B)
+- **Decisões tomadas:** (D3–D7, com link para STATUS.md; D1, D2 e D8 já subiram ao plano em v1.5 — §8 e Apêndice A)
 - **Divergências do plano:** (o que divergiu, por quê, e onde foi registrado)
 - **Evidência dos aceites:** (saída de comando, resultado de teste, caminho dos job dirs de G1–G3)

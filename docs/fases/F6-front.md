@@ -4,7 +4,7 @@
 > **Estimativa:** 4–6 dias úteis (plan §13)
 > **Depende de:** F5 (REST, SSE e preview do intake)
 > **Destrava:** F7 (o marco do MVP é a demo pelas telas) · F9 (o botão da plataforma nasce aqui, desabilitado)
-> **Seções do plano:** §3 (SPA e tópicos SSE) · §4 (stack do front) · §9.1 (intake) · §9.3 (revisão) · §9.4 (envio) · §12 (métricas, SSE, pausa global) · §6 (transições humanas) · §5 (devolutivas) · §10.1–3, §10.8, §10.17, §10.21–23, §10.25–27
+> **Seções do plano:** §3 (SPA e tópicos SSE) · §4 (stack do front) · §9.1 (intake) · §9.3 (revisão) · §9.4 (envio) · §12 (métricas, SSE, pausa global) · §6 e §6.1 (transições humanas) · §5 (devolutivas) · §10.1–3, §10.8, §10.17, §10.21–23, §10.25–27
 
 ## Objetivo
 
@@ -33,7 +33,7 @@ domínio: ele exibe o que a API diz e oferece exatamente as transições humanas
 | Parser e validação do bloco moram no servidor | §9.1, §4, F5 | O front envia o texto **cru** e renderiza o resultado por linha; não re-parseia nem revalida no cliente (duplicar isso cria duas versões da verdade) |
 | Humano é a autoridade sobre o veredito | §9.3, §6 | Aprovar para envio permite trocar o veredito, e `veredito_final` é campo próprio |
 | `texto_agente` é imutável | §5, CLAUDE.md regra dura 7 | A UI edita apenas `texto_final` e exibe o rascunho original somente-leitura ao lado; nenhuma requisição do front carrega `texto_agente` |
-| 1 run ativo por vez no MVP, e o run tem ciclo de vida próprio | §10.21, §5 (`runs.status`) | Botão iniciar desabilitado com explicação, não escondido; o painel lê `GET /api/runs/:id` e as transições de `runs.status` (finalizar, cancelar, pausar, retomar) são chamadas às rotas entregues por F4/F5 — a UI não deduz status de run |
+| 1 run ativo por vez no MVP, e o run tem ciclo de vida próprio | §10.21, §5 (`runs.status`), §6.1 | Botão iniciar desabilitado com explicação, não escondido; o painel lê `GET /api/runs/:id` e as transições **humanas** de `runs.status` (cancelar, pausar, retomar) são chamadas às rotas entregues por F4/F5 — `finalizado` é automático e não tem botão, e a UI não deduz status de run |
 | Trava de revisão do §2.7 | §2.7, §6 | A UI não oferece atalho para pular revisão de item com dúvida, gatilho ou veredito `inconclusivo` — o estado vem do servidor e a tela obedece |
 | Métricas do dashboard no MVP são quatro, e vêm prontas da API | §12, entregues em `GET /api/metricas/dashboard` (F5.8) | Contadores por estado, tempo médio de correção em 24h, taxa de aprovação por skill e gatilhos por tipo — a F6 só consome, não agrega nada; `gatilhos por tipo` vem vazio enquanto a F7 não popular `correcoes.gatilhos`, e nada além das quatro entra (tendências e exportação são F8) |
 | O transcript é servido pela API, não pelo caminho de arquivo | §9.3, §5 (`correcoes.transcript_path`), entregue em `GET /api/correcoes/:id/transcript` (F5.8) | O link do card de revisão aponta para essa rota; o front nunca monta nem envia caminho de arquivo (a F5 resolve o caminho do banco e recusa o que estiver fora de `JOBS_DIR`) |

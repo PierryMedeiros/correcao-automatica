@@ -4,7 +4,7 @@
 > **Estimativa:** 2–3 dias úteis (plan §13)
 > **Depende de:** F1 (banco) · F4 (fila e máquina de estados)
 > **Destrava:** F6 (a SPA só consome o que existe aqui) · F7 (E2E entra pela API) · F9 (drivers e receptor dormante)
-> **Seções do plano:** §9.1 (intake manual) · §9.2 passo 1 (validação da submissão) · §9.4 (envio) · §9.5 (nova tentativa) · §6 (transições cujo ator é a API) · §5 (modelo de dados) · §12 (tópicos SSE, métricas do dashboard) · §3 (drivers, webhook dormante) · §11 (PII) · §10.1–3, §10.5, §10.6, §10.21–23
+> **Seções do plano:** §9.1 (intake manual) · §9.2 passo 1 (validação da submissão) · §9.4 (envio) · §9.5 (nova tentativa) · §6 e §6.1 (transições cujo ator é a API) · §5 (modelo de dados) · §12 (tópicos SSE, métricas do dashboard) · §3 (drivers, webhook dormante) · §11 (PII) · §10.1–3, §10.5, §10.6, §10.21–23
 
 ## Objetivo
 
@@ -202,7 +202,7 @@ SSE. Nada disso tem tela ainda (F6) — é tudo REST verificável por `curl`.
 - [ ] `GET /api/correcoes/:id` devolvendo o dossiê `jsonb` como está e `GET /api/correcoes/:id/transcript` servindo o arquivo de `transcript_path` (§5) com verificação de que o caminho está sob `JOBS_DIR`
 - [ ] `GET /api/notificacoes` e `POST /api/notificacoes/:id/lida`
 - [ ] `GET /api/runs` (lista, com o ativo identificado) e `GET /api/runs/:id` com configuração, contagem por estado das submissões do lote e progresso
-- [ ] `POST /api/runs/:id/cancelar`, `/pausar` e `/retomar` expondo por HTTP as transições **humanas** de `runs.status` (§5) entregues na F4. **Não existe rota de finalizar**: `finalizado` é automático quando todo o lote chega a estado terminal (F4.7) — run que o humano quer encerrar com submissão ainda ativa é `cancelado`, não finalizado por desistência. Transição ilegal responde no contrato de erro da F5.1, sem inventar estado
+- [ ] `POST /api/runs/:id/cancelar`, `/pausar` e `/retomar` expondo por HTTP as transições **humanas** de `runs.status` (§6.1) entregues na F4. **Não existe rota de finalizar**: `finalizado` é automático quando todo o lote chega a estado terminal (F4.7) — run que o humano quer encerrar com submissão ainda ativa é `cancelado`, não finalizado por desistência. Transição ilegal responde no contrato de erro da F5.1, sem inventar estado
 - [ ] Garantir rota de refetch para cada tópico SSE do §12 — em particular `run.updated` → `GET /api/runs/:id`, que é o que torna o evento útil (§10.22)
 - [ ] `GET /api/metricas/dashboard` com as **quatro** métricas do §12: contadores por estado, tempo médio de correção nas últimas 24h, taxa de aprovação por skill e gatilhos por tipo (contagem por código em `correcoes.gatilhos`), esta última devolvendo lista vazia enquanto a F7 não popular o campo (**D5**) — e ela não é a agregação "3+ mesmo gatilho no run" (§10.27), que é por (run, gatilho), tem limiar e é da F7
 - [ ] Datas serializadas em UTC ISO-8601; a conversão para America/Sao_Paulo é da F6
