@@ -4,7 +4,7 @@ Sistema de correção assistida por IA para desafios de alunos da Full Cycle.
 
 Hoje a correção é manual: abrir o Claude Code, colar o desafio, esperar, colar a devolutiva — um por um, ~50 por dia. A Banca transforma isso em um pipeline: **colar as entregas no intake → revisar as devolutivas → clicar em enviar.** O resto é orquestração determinística.
 
-> **Estado:** pré-F0. O plano está escrito e revisado; ainda não há código. Veja [`docs/STATUS.md`](docs/STATUS.md).
+> **Estado:** F0 em andamento — fundação do monorepo pronta, spikes pendentes. Veja [`docs/STATUS.md`](docs/STATUS.md) e o [índice de fases](docs/fases/README.md).
 
 ## Como funciona
 
@@ -75,15 +75,16 @@ Contrato definido no plano; materializado na F0.
 
 | Arquivo | Para quê |
 |---|---|
-| [`docs/project-plan.md`](docs/project-plan.md) | **Fonte da verdade.** Arquitetura, modelo de dados (§5), máquina de estados (§6), contrato do dossiê (§7), runner (§8), edge cases (§10), fases e critérios de aceite (§13) |
+| [`docs/project-plan.md`](docs/project-plan.md) | **Arquitetura e intenção.** Modelo de dados (§5), máquina de estados (§6), contrato do dossiê (§7), runner (§8), edge cases (§10), índice das fases (§13) |
+| [`docs/fases/`](docs/fases/README.md) | **Execução.** Um arquivo por fase: pré-condições, etapas, tarefas, critérios de aceite verificáveis e progresso |
 | [`docs/STATUS.md`](docs/STATUS.md) | Onde paramos: feito, em andamento, próximo passo, decisões |
 | [`docs/INTEGRATION.md`](docs/INTEGRATION.md) | O que **não** sabemos da API da plataforma FC: premissas e perguntas abertas para a equipe, antes de escrever o driver |
 | [`CLAUDE.md`](CLAUDE.md) | Regras para quem desenvolve com IA neste repo |
 
-O plano é documento vivo: mudança de arquitetura passa por ele **antes** de virar código, com o porquê registrado no Apêndice B. Plano e código nunca contam histórias diferentes.
+O plano é documento vivo: mudança de arquitetura passa por ele **antes** de virar código, com o porquê registrado no Apêndice B. Plano, arquivos de fase e código nunca contam histórias diferentes — e `tests/fases.test.ts` quebra o build quando contam.
 
 ## Roadmap
 
 F0 fundação e spikes · F1 banco e domínio · F2 runner e jobs · F3 correção com Claude · F4 fila, estados e resiliência · F5 API e intake · F6 front · F7 hardening e testes → **MVP**. Depois: F8 (multiusuário e web) e F9 (integração com a plataforma FC).
 
-Critérios de aceite de cada fase em [`docs/project-plan.md`](docs/project-plan.md) §13.
+Estado de cada fase, dependências e critérios de aceite em [`docs/fases/README.md`](docs/fases/README.md).

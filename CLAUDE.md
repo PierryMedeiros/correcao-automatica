@@ -6,10 +6,17 @@ Banca: sistema de correção assistida por IA para desafios de alunos da Full Cy
 
 ## Fonte da verdade
 
-`docs/project-plan.md` define tudo: arquitetura (§3), stack (§4), modelo de dados (§5), máquina de estados (§6), contrato do dossiê (§7), runner (§8), fluxos (§9), edge cases (§10), fases com critérios de aceite (§13).
+Dois documentos, com papéis distintos e sem sobreposição:
 
-- Antes de implementar qualquer coisa, leia a seção relevante do plano. Não confie em memória.
-- Se a implementação precisar divergir do plano: pare, atualize o plano (registrando o porquê no Apêndice B) e só então implemente. Plano e código nunca contam histórias diferentes.
+- **`docs/project-plan.md` — arquitetura e intenção.** Define arquitetura (§3), stack (§4), modelo de dados (§5), máquina de estados (§6), contrato do dossiê (§7), runner (§8), fluxos (§9), edge cases (§10), observabilidade (§12) e o índice das fases (§13). É o registro do porquê, e porquê não expira.
+- **`docs/fases/F<n>-<slug>.md` — execução.** Dono das tarefas e dos **critérios de aceite** de cada fase: pré-condições, etapas numeradas, tarefas com checkbox, aceite verificável, escopo negativo, impacto em fases seguintes. Índice consolidado em `docs/fases/README.md`.
+
+Regras:
+
+- Antes de implementar qualquer coisa, leia a seção relevante do plano **e** o arquivo da fase. Não confie em memória.
+- Se a implementação precisar divergir: **arquitetura muda no plano primeiro** (com o porquê no Apêndice B), depois no arquivo da fase, depois no código. Tarefa ou aceite que se mostrou errado muda direto no arquivo da fase, com a razão no "Registro de execução". Plano, arquivo de fase e código nunca contam histórias diferentes.
+- Marcador de status de fase (`⬜`/`⏳`/`✅`) vive em três lugares — arquivo da fase, índice e §13 — e `tests/fases.test.ts` quebra se divergirem. Ao mudar um, mude os três.
+- Fase implementada é renomeada para `F<n>-<slug>-concluida.md`, para o `ls` de `docs/fases/` mostrar o estado do projeto. O sufixo e o marcador `✅` são a mesma informação e o guard exige que concordem; os links do índice e do §13 acompanham o rename.
 - `docs/STATUS.md` diz onde paramos. Leia no início de toda sessão; atualize ao encerrar.
 
 ## Stack
@@ -26,6 +33,7 @@ runner/            # Dockerfile, entrypoint.sh, prompt-template.md
 skills-correcao/   # skills corrige-* (fonte dos critérios de correção — conteúdo, não código)
 docs/              # project-plan.md, STATUS.md, INTEGRATION.md,
                    # spikes.md (nasce na F0), runbook.md (nasce na F7)
+docs/fases/        # README.md (índice) + F0..F9 — plano executável de cada fase
 scripts/           # utilitários; scripts/hooks/ = guards executáveis das regras duras
 compose.yaml       # Postgres de desenvolvimento
 ```
@@ -69,7 +77,8 @@ Nascem com a fase que os torna possíveis (não são dívida, são sequência):
 
 ## Fluxo de trabalho
 
-- Ordem: fases F0→F7 do plan §13. Os critérios de aceite de cada fase são a definição de pronto.
+- Ordem: fases F0→F7 (índice no plan §13, plano executável em `docs/fases/`). Os critérios de aceite do arquivo da fase são a definição de pronto, e são executados de verdade — não presumidos. Implementar fase é sempre pela skill `implementar-fase`.
+- Toda fase encerra com **revisão de impacto nas fases seguintes**: o que foi decidido, renomeado, adiado ou descoberto é procurado nos arquivos das fases posteriores e atualizado lá. Doc que envelhece em silêncio é a falha que essa revisão existe para impedir.
 - F0 primeiro, spikes antes de código de produção: S1 (headless + token — risco nº 1), S2 (netns), S3 (compose sem portas + network externa). Resultados vão em `docs/spikes.md`.
 - Testes nascem junto com o código que testam (parser, máquina de estados e validador do dossiê têm suite desde o primeiro commit que os cria).
 - Commits: conventional commits (`feat:`, `fix:`, `docs:`, `chore:`), mensagem em português — só quando o usuário pedir (regra dura 9), sempre pela skill `commit-e-push`.
