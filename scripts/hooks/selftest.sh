@@ -5,6 +5,7 @@
 # barulho que o fail-open não faz. Roda no aceite da F0 e sempre que um guard for mexido.
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit 1
+raiz=$(pwd)
 
 falhas=0
 total=0
@@ -22,6 +23,32 @@ verifica() {
     printf '  ok      [%s esperado] %s\n' "$esperado" "$comando"
   else
     printf '  FALHOU  [esperado %s, obtido %s] %s\n' "$esperado" "$obtido" "$comando"
+    falhas=$((falhas + 1))
+  fi
+}
+
+# O guard de segredo varre o que está staged, não o comando. Monta um repo descartável,
+# staga as linhas passadas como argumentos e compara o exit code com o esperado.
+verifica_staged() {
+  local esperado="$1" rotulo="$2"
+  shift 2
+  local tmp obtido
+  tmp=$(mktemp -d)
+  git init -q "$tmp"
+  git -C "$tmp" config user.email selftest@local
+  git -C "$tmp" config user.name selftest
+  printf '%s\n' "$@" >"$tmp/alvo.txt"
+  git -C "$tmp" add alvo.txt
+  (cd "$tmp" && CLAUDE_PROJECT_DIR="$tmp" \
+    bash "$raiz/scripts/hooks/bloqueia-segredo-no-commit.sh" \
+    <<<"$(printf 'git commit -m "x"' | jq -R '{tool_input:{command:.}}')" >/dev/null 2>&1)
+  obtido=$?
+  rm -rf "$tmp"
+  total=$((total + 1))
+  if [ "$obtido" -eq "$esperado" ]; then
+    printf '  ok      [%s esperado] %s\n' "$esperado" "$rotulo"
+  else
+    printf '  FALHOU  [esperado %s, obtido %s] %s\n' "$esperado" "$obtido" "$rotulo"
     falhas=$((falhas + 1))
   fi
 }
@@ -59,49 +86,39 @@ for c in "git push origin main" "git push -u origin main" "git push" "git status
 done
 
 echo "5. segredo em conteúdo staged (regra dura 5) — deve BLOQUEAR"
-tmp_repo=$(mktemp -d)
-git init -q "$tmp_repo"
-git -C "$tmp_repo" config user.email selftest@local
-git -C "$tmp_repo" config user.name selftest
-# O prefixo é montado em duas partes: escrito inteiro, o scanner acusaria este próprio arquivo.
-printf 'ANTHROPIC_API_KEY=%s%s\n' 'sk-' 'ant-teste123' >"$tmp_repo/vaza.txt"  # guard:fixture
-printf 'CLAUDE_CODE_OAUTH_TOKEN=oat01AbCdEf9876\n' >>"$tmp_repo/vaza.txt"  # guard:fixture
-git -C "$tmp_repo" add vaza.txt
-(cd "$tmp_repo" && CLAUDE_PROJECT_DIR="$tmp_repo" \
-  bash "$OLDPWD/scripts/hooks/bloqueia-segredo-no-commit.sh" \
-  <<<"$(printf 'git commit -m "x"' | jq -R '{tool_input:{command:.}}')" >/dev/null 2>&1)
-obtido=$?
-total=$((total + 1))
-if [ "$obtido" -eq 2 ]; then
-  echo "  ok      [2 esperado] arquivo com chave e token reais staged"
-else
-  echo "  FALHOU  [esperado 2, obtido $obtido] arquivo com chave e token reais staged"
-  falhas=$((falhas + 1))
-fi
+# Cada fixture mora na própria linha porque o escape `guard:fixture` é por linha e não cabe em
+# continuação com `\`. O prefixo da chave é montado em duas partes: escrito inteiro, o scanner
+# acusaria este arquivo.
+chave_falsa="ANTHROPIC_API_KEY=$(printf '%s%s' 'sk-' 'ant-teste123')"  # guard:fixture
+token_falso="CLAUDE_CODE_OAUTH_TOKEN=oat01AbCdEf9876"  # guard:fixture
+verifica_staged 2 "chave e token reais staged" "$chave_falsa" "$token_falso"
 
 echo "6. placeholders e senha pública de dev — deve PASSAR"
-git -C "$tmp_repo" rm -q --cached vaza.txt
-rm -f "$tmp_repo/vaza.txt"
-{
-  printf 'CLAUDE_CODE_OAUTH_TOKEN=\n'  # guard:fixture
-  printf 'DATABASE_URL=\n'
-  printf 'RUNNER_TOKEN=***\n'  # guard:fixture
-  printf '      - POSTGRES_PASSWORD=banca\n'  # guard:fixture
-  printf 'API_KEY=${MINHA_VAR}\n'  # guard:fixture
-} >"$tmp_repo/ok.txt"
-git -C "$tmp_repo" add ok.txt
-(cd "$tmp_repo" && CLAUDE_PROJECT_DIR="$tmp_repo" \
-  bash "$OLDPWD/scripts/hooks/bloqueia-segredo-no-commit.sh" \
-  <<<"$(printf 'git commit -m "x"' | jq -R '{tool_input:{command:.}}')" >/dev/null 2>&1)
-obtido=$?
-total=$((total + 1))
-if [ "$obtido" -eq 0 ]; then
-  echo "  ok      [0 esperado] vazios, mascarados, \$VAR e senha pública de dev"
-else
-  echo "  FALHOU  [esperado 0, obtido $obtido] vazios, mascarados, \$VAR e senha pública de dev"
-  falhas=$((falhas + 1))
-fi
-rm -rf "$tmp_repo"
+verifica_staged 0 "vazios, mascarados, \$VAR e senha pública de dev" \
+  "CLAUDE_CODE_OAUTH_TOKEN=" \
+  "DATABASE_URL=" \
+  "RUNNER_TOKEN=***" \
+  "      - POSTGRES_PASSWORD=banca" \
+  "API_KEY=\${MINHA_VAR}"  # guard:fixture
+
+echo "7. padrão de busca documentado — deve PASSAR"
+# Documentar como se confere uma variável não é vazar o valor dela: o que a extração do guard
+# devolve nestes casos é pedaço de regex (`.\`, `[^`, `\S`), não credencial. Foi o falso
+# positivo que bloqueou o commit do plano de fases em 07/08/2026.
+verifica_staged 0 "grep ancorado com quantificador" \
+  "- \`grep -q '^CLAUDE_CODE_OAUTH_TOKEN=.\+' .env\` sai 0"  # guard:fixture
+verifica_staged 0 "classe de caracteres em awk" \
+  "- \`awk -F= '/^ANTHROPIC_API_KEY=[^ ]/ {print}' .env\`"  # guard:fixture
+verifica_staged 0 "atalho de classe escapado" \
+  "- \`rg '^RUNNER_TOKEN=\S+' .env\`"  # guard:fixture
+
+echo "8. segredo escondido atrás de metacaractere — deve BLOQUEAR"
+# A regra do item 7 só dispensa a heurística de variável. A varredura por prefixo de chave roda
+# sobre a linha inteira e é independente dela — é isto que impede que o item 7 vire porta.
+verifica_staged 2 "chave real precedida de ponto" \
+  "ANTHROPIC_API_KEY=.$(printf '%s%s' 'sk-' 'ant-escondida999')"  # guard:fixture
+verifica_staged 2 "token real na mesma linha de um grep" \
+  "rode \`grep TOKEN .env\` e compare com CLAUDE_CODE_OAUTH_TOKEN=oat01ZzYyXx4321"  # guard:fixture
 
 echo
 if [ "$falhas" -eq 0 ]; then

@@ -36,6 +36,7 @@ Atualizado em: 07/08/2026 (America/Sao_Paulo) — plano de fases executável esc
 - 07/08/2026: **numeração F0–F9 preservada**, com granularidade fina em etapas internas (F2.1, F2.2…). Renumerar quebraria referências em cinco documentos e no histórico de decisões, em troca de ganho cosmético
 - 07/08/2026: **um dono por informação** — plano é dono da arquitetura e da intenção; arquivo de fase é dono das tarefas e dos critérios de aceite. Aceite deixou de existir em dois lugares
 - 07/08/2026: **coerência da documentação virou teste** (`tests/fases.test.ts`), na mesma linha dos guards de `scripts/hooks/`: regra que não é executável é conselho
+- 07/08/2026: **o scanner de segredo passou a distinguir padrão de busca de valor** — valor extraído que começa com `.`, `^`, `[` ou `\` é fragmento de regex, não credencial. Bloqueava documentar como se confere uma variável (`grep -q '^X_TOKEN=.\+' .env`). A detecção por prefixo de chave é independente e não foi tocada; o selftest prova os dois lados (itens 7 e 8)
 - 07/08/2026: **fase implementada é renomeada para `F<n>-<slug>-concluida.md`** — o `ls` de `docs/fases/` passa a ser o painel de progresso. Só o `✅` renomeia (`⬜` e `⏳` mantêm o nome), então cada fase é renomeada uma vez só
 - 07/08/2026: **o que o plano não decidiu vira seção "Decisões a tomar nesta fase"**, com opções e recomendação, em vez de ser decidido em silêncio durante a implementação. São ~70 decisões catalogadas nas dez fases
 - 2026-08-06: NestJS + Prisma, PrimeVue, pg-boss, pnpm workspaces, nome-código "Banca" (justificativas no plan §4)

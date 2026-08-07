@@ -41,6 +41,12 @@ while IFS= read -r linha; do
     sed -E 's/.*(_TOKEN|_KEY|PASSWORD|_SECRET)[A-Za-z0-9_]*[[:space:]]*=[[:space:]]*//' |
     sed -E 's/^["'\''`]+//; s/["'\''`,;].*$//; s/[[:space:]].*$//')
   [ -z "$valor" ] && continue
+  # Valor que começa com metacaractere de regex é padrão de busca sendo documentado, não
+  # credencial: `grep -q '^FOO_TOKEN=.\+' .env` faz a extração acima devolver `.\`. Nenhum
+  # formato de token, chave ou senha começa com `.`, `^`, `[` ou `\` — e a varredura por
+  # prefixo de chave (acima, sobre a linha inteira) não passa por aqui, então esconder um
+  # segredo real atrás de um ponto continua bloqueado. O selftest prova as duas coisas.
+  case "$valor" in .* | '^'* | '['* | '\'*) continue ;; esac
   printf '%s' "$valor" | grep -qiE "$placeholders" && continue
   variaveis="${variaveis}${linha}"$'\n'
 done <<<"$candidatas"
