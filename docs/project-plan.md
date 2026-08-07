@@ -2,7 +2,7 @@
 
 Sistema de correção assistida por IA para desafios de alunos da Full Cycle.
 
-- Versão: 1.3 — Agosto/2026
+- Versão: 1.4 — Agosto/2026
 - Nome-código: "Banca" (a banca que corrige). Provisório; trocar depois é um find-replace.
 - Status: documento vivo. Mudança de arquitetura passa por aqui antes de virar código.
 - Envelhecimento: quando uma fase é marcada como implementada, o **código** passa a ser a
@@ -11,6 +11,9 @@ Sistema de correção assistida por IA para desafios de alunos da Full Cycle.
   mudança de arquitetura continua passando por ele antes do código. Nenhuma seção é arquivada ou
   removida: o plano é o registro do porquê, e porquê não expira.
 - Localização: `docs/project-plan.md`.
+- Fases: o §13 é o índice. O plano executável de cada fase — etapas, tarefas, aceite verificável e
+  progresso — mora em [`docs/fases/`](fases/README.md), que é o dono das tarefas e dos critérios de
+  aceite. Esta divisão está registrada no Apêndice B (v1.4) e é verificada por `tests/fases.test.ts`.
 
 ---
 
@@ -370,75 +373,121 @@ Match automático por (aluno_email, projeto, fase) contra a submissão anterior 
 
 ## 13. Fases de implementação
 
+Cada fase tem arquivo próprio em `docs/fases/`, que é o **dono das tarefas e dos critérios de aceite**. Esta seção é o índice: o que a fase resolve, quanto se estimou, de que ela depende e por que ela existe onde está. O detalhe operacional — etapas, tarefas, aceite executável e marcação de progresso — mora no arquivo da fase; a visão consolidada está em [`docs/fases/README.md`](fases/README.md).
+
+A separação é deliberada: o plano registra arquitetura e intenção, que não expiram; o arquivo de fase registra execução, que muda a cada dia de trabalho. Duas versões da mesma verdade fariam o agente escolher sozinho qual obedecer — por isso `tests/fases.test.ts` quebra o build quando os marcadores de status dos dois lados divergem.
+
 Estimativas em dias úteis de foco, solo com apoio de IA; ver disclaimer ao final da seção.
 
-### F0 — Fundação e spikes (1–2d) ⏳ em andamento (iniciada 07/08/2026) — fundação pronta, spikes pendentes
+### F0 — Fundação e spikes (1–2d) ⏳ em andamento (iniciada 2026-08-07)
 
-Objetivo: repo de pé e os três maiores riscos técnicos provados antes de escrever o sistema.
+Repo de pé e os três maiores riscos técnicos provados antes de escrever o sistema: **S1** Claude headless em container com plano Max, **S2** isolamento de rede por container, **S3** compose sem portas publicadas apontando para network externa pré-criada — exatamente a topologia do §8.
 
-Entregas: monorepo pnpm; `compose.yaml` com Postgres; lint/format; **runner de testes (vitest) configurado no monorepo** — sem ele o "pnpm test verde" que fecha toda fase não tem onde rodar, e a F1 já nasce devendo teste; `docs/` com este plano, `INTEGRATION.md` inicial (o que assumimos e as perguntas para a equipe da plataforma: endpoint de pendentes com URL do repo, endpoint de postar status+feedback, formato/existência do webhook, autenticação) e `docs/spikes.md`; ambiente de dev assistido por IA (CLAUDE.md, skills de desenvolvimento e guards executáveis em `scripts/hooks/`).
+S1 é o risco nº 1 do projeto: se travar, tudo para até resolver. O runner de testes entra já aqui e não na F1 porque é o "`pnpm test` verde" que fecha toda fase — sem ele a F1 nasceria devendo teste.
 
-Aceite da fundação: `pnpm lint` verde; `pnpm test` verde com **ao menos 1 teste real** (não placeholder); `bash scripts/hooks/selftest.sh` verde.
+**Depende de:** nada — é a primeira fase
 
-Spikes (aceite = os três verdes, documentados em `docs/spikes.md`):
+**Plano executável:** [`docs/fases/F0-fundacao-e-spikes.md`](fases/F0-fundacao-e-spikes.md)
 
-- **S1 — Claude headless em container com plano Max**: imagem mínima com o CLI; `claude setup-token` no host; `claude -p` no container com `CLAUDE_CODE_OAUTH_TOKEN` lê um SKILL.md montado, segue a instrução e escreve um JSON; transcript capturado via `stream-json --verbose`; definir a flag de permissão para execução não-assistida. É o risco nº 1 do projeto — se travar, tudo para até resolver.
-- **S2 — Isolamento de rede**: dois containers sobem processos na 8080 simultaneamente sem conflito; de dentro de cada um, `curl localhost:8080` responde o próprio processo.
-- **S3 — Compose sem portas + network externa**: gerar override que remove `ports:`/`container_name:` de um compose real de desafio e aponta a default network para uma externa pré-criada; subir com `-p`; de um segundo container já conectado a essa network, alcançar o serviço por hostname (é exatamente a topologia do §8).
+### F1 — Banco e domínio (1–2d) ⬜ não iniciada
 
-### F1 — Banco e domínio (1–2d)
+O modelo de dados do §5 vira schema Prisma, migrations e seed: `pg_trgm`, índice único parcial de submissão ativa, `skills_map` carregado de `docs/skills-map.csv` e `config` com os defaults dos limiares do §12.
 
-Entregas: schema Prisma completo (§5) + migrations; extensão `pg_trgm`; seed do `skills_map` via script que lê `docs/skills-map.csv` (colunas: projeto, fase, skill_slug, modo_avaliacao, base_repo_url, timeout_s) — o arquivo já existe com as 49 linhas de `skill_slug` preenchidas e `modo_avaliacao` sugerido por heurística onde ela era confiável; completar `projeto`, `fase` e revisar o modo é ação do Pierry (§17); tabela `eventos` e `config` com defaults (incluindo os limiares de gatilho de tamanho do §12).
+O seed **recusa a linha inteira** quando falta `projeto`, `fase`, `skill_slug` ou `modo_avaliacao`, reportando número da linha e campo. Falhar alto aqui é barato; um `skills_map` meio preenchido vira `sem_skill` silencioso na fila, que custa muito mais caro de diagnosticar.
 
-O seed **recusa a linha inteira** se `projeto`, `fase`, `skill_slug` ou `modo_avaliacao` vier vazio, reportando número da linha e campo faltante — `base_repo_url` e `timeout_s` são opcionais por §5. Falhar alto aqui é barato; um `skills_map` meio preenchido vira `sem_skill` silencioso na fila, que custa muito mais caro de diagnosticar.
+**Depende de:** F0
 
-Aceite: migrations sobem do zero; seed carrega o CSV completo; CSV com linha incompleta é recusado com mensagem apontando linha e campo; testes de unidade do acesso a dados e do parser do CSV.
+**Ação humana que destrava:** §17.5 (decisões reversíveis confirmadas)
 
-### F2 — Runner e execução de jobs (3–4d)
+**Plano executável:** [`docs/fases/F1-banco-e-dominio.md`](fases/F1-banco-e-dominio.md)
 
-Entregas: imagem do runner (§8); Job Controller (job dir, docker run com mounts/limites/labels, acompanhamento, coleta de artefatos, teardown em camadas); gerador de override noports; conexão do runner à network do job; janitor; recuperação de órfãos no boot; jitter.
+### F2 — Runner e execução de jobs (3–4d) ⬜ não iniciada
 
-Aceite: job fake (sem LLM: script que clona um repo, sobe um compose de exemplo, escreve um dossiê estático) roda fim a fim; 4 jobs fake em paralelo com o mesmo compose de portas fixas, sem colisão; matar o processo da API no meio → após restart + janitor, zero container e zero network órfã, e zero job dir **órfão** no sentido do §11 (nenhuma linha de `correcoes` o referencia). Job dir de correção que chegou a ser persistida — inclusive `falhou` — **deve continuar lá**: apagá-lo é o bug, não o aceite.
+O ambiente onde uma correção acontece: imagem do runner (§8), Job Controller com job dir e coleta de artefatos, gerador de override noports, network por job, teardown em camadas, janitor, recuperação de órfãos no boot e jitter. Validada com job fake, sem LLM — o agente entra só na F3.
 
-### F3 — Correção com Claude (3–5d)
+O aceite guarda uma sutileza que já custou uma contradição (Apêndice B, v1.3 item 3): job dir **órfão** — nenhuma linha de `correcoes` o referencia — sai no próximo ciclo do janitor; job dir de correção persistida, **inclusive `falhou`**, fica os 14 dias do §11. Apagá-lo é o bug, não o aceite.
 
-Entregas: `prompt-template.md` do corretor v2 (Apêndice A); montagem da skill no runner; invocação headless com `--model` do run; captura de transcript; validação do dossiê com retry corretivo via `--resume`; veredito `inconclusivo`; injeção de contexto de tentativa anterior.
+**Depende de:** F0, F1
 
-Aceite: golden repos G1 (aprovado) e G2 (reprovado) corrigidos fim a fim com dossiê válido e devolutiva no formato da skill; G3 (skill estática) corrigido sem subir container; evidência de reprovação em G2 é literal (saída de comando), não paráfrase.
+**Ação humana que destrava:** §17.4 (`.wslconfig` e suspensão)
 
-### F4 — Fila, estados e resiliência (2–3d)
+**Plano executável:** [`docs/fases/F2-runner-e-jobs.md`](fases/F2-runner-e-jobs.md)
 
-Entregas: pg-boss integrado; máquina de estados persistida com transições do §6; limite de 3 execuções por submissão (`retry_n`) + timeout (default 1500s, override por skill); pausa global manual e automática (detecção de limite/credencial nos erros do CLI); cancelamento com kill+teardown; substituição; dedupe por índice parcial; `nao_executada` sem consumo de retry.
+### F3 — Correção com Claude (3–5d) ⬜ não iniciada
 
-Aceite: cenários simulados passam — matar worker no meio, token inválido forjado (pausa + notificação + retomada), submissão duplicada (substitui inclusive durante `corrigindo`), 3 falhas seguidas → `erro` com transcript.
+O corretor de verdade: `prompt-template.md` v2 (Apêndice A), skill montada no runner, invocação headless com o modelo do run, captura de transcript, contrato do dossiê do §7 com retry corretivo via `--resume`, veredito `inconclusivo` e injeção de contexto de tentativa anterior.
 
-### F5 — API e intake (2–3d)
+Evidência de reprovação tem que ser literal — saída de comando, não paráfrase. É o que separa devolutiva defensável de opinião do modelo.
 
-Entregas: REST (submissões, correções, devolutivas, runs, notificações, config) + SSE; parser de bloco no `packages/shared` com suite de testes de blocos reais (incluindo malformados e com fins de linha CRLF vindos do Windows); endpoint de preview/confirmação; dropdown de skill manual; template de devolutiva de link inválido em `config`.
+**Depende de:** F0, F1, F2
 
-Aceite: colar 5 blocos reais do admin → 5 submissões corretas; bloco sem repositório → erro apontado na linha do preview; `Celular:` presente no bloco → ausente no banco.
+**Ação humana que destrava:** §17.2 (golden repos G1–G3)
 
-### F6 — Front (4–6d)
+**Plano executável:** [`docs/fases/F3-correcao-com-claude.md`](fases/F3-correcao-com-claude.md)
 
-Telas: Intake (colar bloco + preview + config do run + botão FC desabilitado com aviso); Dashboard/Fila (contadores por estado, run ativo com progresso, pausar/retomar, banner de gatilho agregado); Revisão (lista + card do §9.3); Prontas para envio (copiar + marcar enviada); Histórico (DataTable com filtros por estado/skill/aluno/período); Notificações (badge + lista).
+### F4 — Fila, estados e resiliência (2–3d) ⬜ não iniciada
 
-Aceite: fluxo completo de demo executável só com o mouse: colar blocos → iniciar → acompanhar ao vivo → revisar/editar → enviar → conferir no histórico.
+pg-boss, a máquina de estados do §6 persistida, limite de 3 execuções por submissão, timeout, pausa global manual e automática, cancelamento com kill+teardown, substituição e dedupe pelo índice parcial.
 
-### F7 — Hardening, verificadores e testes (3–5d)
+`nao_executada` não consome retry: pausa por limite de plano é falha do ambiente, não da correção — contá-la queimaria as tentativas da submissão por algo que ela não causou.
 
-Entregas: gatilhos programáticos do §12 (tamanho, similaridade pg_trgm, coerências, duração anômala) + banner 3+; suite E2E com os golden repos G1–G10 (§14) rodável por script; backup; `docs/runbook.md`; passada final na matriz do §10 confirmando cobertura.
+**Depende de:** F1, F2, F3
 
-Aceite: suite E2E verde em execução limpa; simulação dos casos 5, 7, 9, 10, 12 e 24–27 do §10 passa.
+**Plano executável:** [`docs/fases/F4-fila-estados-e-resiliencia.md`](fases/F4-fila-estados-e-resiliencia.md)
+
+### F5 — API e intake (2–3d) ⬜ não iniciada
+
+REST + SSE, parser de bloco em `packages/shared`, preview/confirmação do intake com escolha manual de skill e template de devolutiva de link inválido em `config`.
+
+Intake manual é feature definitiva (§9.1), não paliativo até a integração chegar: a segunda plataforma de cursos da empresa vai usá-lo para sempre.
+
+**Depende de:** F1, F4
+
+**Plano executável:** [`docs/fases/F5-api-e-intake.md`](fases/F5-api-e-intake.md)
+
+### F6 — Front (4–6d) ⬜ não iniciada
+
+As telas do §9.1, §9.3 e §9.4: Intake, Dashboard/Fila, Revisão, Prontas para envio, Histórico e Notificações, ao vivo por SSE.
+
+O aceite é o fluxo de demo inteiro executável só com o mouse — que é a meta 1 do §1 posta à prova: o papel humano reduzido a colar, revisar e clicar.
+
+**Depende de:** F5
+
+**Plano executável:** [`docs/fases/F6-front.md`](fases/F6-front.md)
+
+### F7 — Hardening, verificadores e testes (3–5d) ⬜ não iniciada
+
+Gatilhos programáticos do §12, banner de gatilho agregado, suite E2E com os golden repos G1–G10 (§14), backup, `docs/runbook.md` e a passada final na matriz do §10.
+
+A suite golden não é só teste de regressão de código: é o detector de "o modelo mudou e a régua mudou junto" (§14, §15) — ela roda de novo a cada mudança de prompt, de skill ou de modelo do run.
+
+**Depende de:** F3, F4, F5, F6
+
+**Ação humana que destrava:** §17.2 (golden repos G1–G10)
+
+**Plano executável:** [`docs/fases/F7-hardening-e-testes.md`](fases/F7-hardening-e-testes.md)
 
 **Marco: MVP pronto — demo para o chefe.** (Soma F0–F7: ~19–30 dias úteis. Em paralelo com o expediente, algo como 4–6 semanas corridas. Estimativa honesta, não promessa.)
 
-### F8 — Pós-aprovação: multiusuário e web (dimensionar depois)
+### F8 — Pós-aprovação: multiusuário e web (dimensionar depois) ⬜ não iniciada
 
 Auth (avaliar reaproveitar o login da empresa), deploy em host Linux com Docker, socket proxy + egress lateral restrito, chave de API organizacional (ou plano dedicado — decisão do chefe; trocar é variável de ambiente), permissões, métricas avançadas, retenção revisada.
 
-### F9 — Integração FC (depende da equipe da plataforma)
+Não dimensionar agora é decisão, não omissão: os números que escolhem entre API key e plano dedicado só existem depois de o MVP operar de verdade (§15).
+
+**Depende de:** F7
+
+**Ação humana que destrava:** §17.7 (destino do `SKILLS_DIR`)
+
+**Plano executável:** [`docs/fases/F8-multiusuario-e-web.md`](fases/F8-multiusuario-e-web.md)
+
+### F9 — Integração FC (depende da equipe da plataforma) ⬜ não iniciada
 
 Ativar o receptor de webhook (payloads reais → `webhook_payloads` → escrever o driver contra a realidade); driver `fc_platform` de origem (listar pendentes) e envio (postar status+feedback); reconciliação por polling como fallback do webhook; responder o `INTEGRATION.md`. O botão "Buscar desafios em aberto" passa a funcionar; envio automático real para essa origem.
+
+**Depende de:** F5, F6
+
+**Plano executável:** [`docs/fases/F9-integracao-fc.md`](fases/F9-integracao-fc.md)
 
 ## 14. Plano de testes
 
@@ -518,6 +567,38 @@ Revisão feita em 06/08/2026, relendo o documento integral e checando: coerênci
 9. **Miúdos**: reenvio de aluno não exige mais veredito reprovado na anterior (§9.5); devolutiva vigente em reprocessamento definida (§5); correções órfãs pós-reboot ganham marcação explícita antes de voltar à fila (§10.12).
 
 Verificado e mantido sem alteração: numeração e dependências das fases; referências cruzadas (os casos 5, 7, 9, 10, 12 e 24–27 citados no aceite da F7 existem na matriz do §10); 25 min = 1500 s consistente; teto de paralelismo 2/4 coerente entre §8, F2 e G8; nenhum resquício de `cleanDocker.sh`, senha de sudo ou `docker system prune` como mecanismo do sistema.
+
+Revisão adicional em 07/08/2026 (v1.4), motivada por uma constatação do usuário no primeiro dia de
+desenvolvimento: o §13 descrevia a *intenção* de cada fase, não um plano executável — faltavam tarefas,
+sequência, arquivos tocados e o "como provar" de cada aceite. Cinco mudanças estruturais, nenhuma de
+arquitetura do sistema:
+
+1. **Cada fase ganhou arquivo próprio** em `docs/fases/F<n>-<slug>.md`: pré-condições verificáveis,
+   etapas numeradas (F2.1, F2.2…), tarefas com checkbox, aceite com comando e evidência esperada, edge
+   cases do §10 atribuídos, escopo negativo com destino, e registro de execução. A numeração F0–F9 foi
+   preservada de propósito — ela está referenciada no STATUS.md, no README.md, no CLAUDE.md e neste
+   apêndice, e renumerar quebraria o histórico de decisões em troca de ganho cosmético. A granularidade
+   fina veio das etapas internas.
+2. **A propriedade dos critérios de aceite migrou** para o arquivo da fase; o §13 virou índice
+   (objetivo, estimativa, dependências, link e o porquê de a fase existir onde está). Manter os dois
+   descrevendo "pronto" seria exatamente a duplicação que o CLAUDE.md alerta: o agente escolhe sozinho
+   qual obedecer, e a escolha é invisível. O que ficou no §13 é registro do porquê, que não expira; o
+   que saiu é execução, que muda a cada dia de trabalho.
+3. **A coerência entre os dois virou teste.** `tests/fases.test.ts` valida que toda fase tem arquivo,
+   que os marcadores de status batem entre arquivo da fase, índice e §13, que as dependências
+   declaradas batem entre o §13 e o arquivo, que o grafo "Depende de"/"Destrava" é simétrico e sem
+   referência para frente, que fase marcada ✅ não deixou tarefa em aberto e que nenhuma fase é
+   concluída antes daquelas de que depende. Mesma linha dos guards de `scripts/hooks/`: regra que não
+   é executável é conselho.
+4. **Fase implementada leva a conclusão no nome do arquivo** — `F1-banco-e-dominio-concluida.md` — para
+   que um `ls docs/fases/` conte o estado do projeto sem abrir nada. O sufixo e o marcador `✅` são a
+   mesma informação em dois canais, e por isso o guard exige que concordem nos dois sentidos: renomear
+   sem fechar a fase mente tanto quanto fechar sem renomear. `⬜` e `⏳` mantêm o nome original, para
+   que cada fase seja renomeada uma vez só.
+5. **A skill `implementar-fase` ganhou revisão de cascata obrigatória.** No encerramento, o que a fase
+   decidiu, renomeou, adiou ou descobriu é procurado nos arquivos das fases seguintes e atualizado lá,
+   com o resultado na tabela "Impacto em fases seguintes". Era o buraco real do fluxo anterior: uma
+   decisão tomada na F2 só chegava à F5 se alguém lembrasse.
 
 Revisão adicional em 07/08/2026 (v1.3), fechando as contradições e ambiguidades encontradas numa
 releitura integral feita com o repositório na frente. Datas deste ponto em diante em America/Sao_Paulo.
