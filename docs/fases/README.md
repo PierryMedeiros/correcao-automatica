@@ -20,7 +20,7 @@ seguintes.
 
 | Fase | Status | Estimativa | Depende de |
 |---|---|---|---|
-| [F0 — Fundação e spikes](F0-fundacao-e-spikes.md) | ⏳ em andamento (iniciada 2026-08-07) | 1–2d | — |
+| [F0 — Fundação e spikes](F0-fundacao-e-spikes-concluida.md) | ✅ implementada em 2026-08-07 | 1–2d | — |
 | [F1 — Banco e domínio](F1-banco-e-dominio.md) | ⬜ não iniciada | 1–2d | F0 |
 | [F2 — Runner e execução de jobs](F2-runner-e-jobs.md) | ⬜ não iniciada | 3–4d | F0, F1 |
 | [F3 — Correção com Claude](F3-correcao-com-claude.md) | ⬜ não iniciada | 3–5d | F0, F1, F2 |
@@ -66,11 +66,11 @@ fila e a resiliência · F5 dá a API · F6 dá as telas · F7 endurece e testa.
 
 | Ação | Destrava | Estado |
 |---|---|---|
-| §17.1 — completar `docs/skills-map.csv` (projeto, fase, revisão dos modos) | F1 | pendente |
+| §17.1 — completar `docs/skills-map.csv` (projeto, fase, revisão dos modos) | F1 | ✅ resolvida em 07/08/2026 — 48/48 |
 | §17.2 — coletar e congelar os golden repos G1–G10 | F3 (G1–G3), F7 (G1–G10) | pendente |
-| §17.3 — rodar `claude setup-token` e guardar no `.env` | F0 (spike S1) | pendente |
+| §17.3 — rodar `claude setup-token` e guardar no `.env` | F0 (spike S1) | ✅ resolvida em 07/08/2026 |
 | §17.4 — `.wslconfig` (`processors=6`) e desativar suspensão | F2 (paralelismo real), F7 | pendente |
-| §17.5 — validar decisões ainda reversíveis (NestJS+Prisma, PrimeVue, nome) | F1 em diante | pendente |
+| §17.5 — validar decisões ainda reversíveis (NestJS+Prisma, PrimeVue, nome) | F1 em diante | ⏳ parcial — **NestJS+Prisma confirmado em 07/08/2026**; PrimeVue e o nome só pesam na F6 |
 | §17.7 — decidir o destino do `SKILLS_DIR` fora de `.claude/` | F8 | pendente |
 
 Pendência não resolvida **bloqueia** a fase: a skill manda parar e perguntar, não inventar substituto.

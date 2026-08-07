@@ -15,16 +15,19 @@ mais os defaults operacionais de `config`.
 
 ## Pré-condições
 
-- [ ] F0 marcada ✅ em `docs/fases/README.md` e no §13 do plano — ou, se o usuário antecipar a F1, decisão
+- [x] F0 marcada ✅ em `docs/fases/README.md` e no §13 do plano — ou, se o usuário antecipar a F1, decisão
       registrada em `docs/STATUS.md` (nada aqui depende de S1/S2/S3: a dependência é de ordem, não técnica)
-- [ ] `docs/skills-map.csv` completo (§17.1): `projeto`, `fase` e `modo_avaliacao` nas 49 linhas —
-      `awk -F, 'NR>1 && ($1=="" || $2=="" || $4=="")' docs/skills-map.csv` com saída vazia. **Antes disso o
-      seed recusa o arquivo inteiro** (F1.6)
-- [ ] §17.5 respondido: NestJS+Prisma e PrimeVue confirmados pelo usuário — a F1 crava o Prisma
-      (schema, migrations e client), e reverter depois deixa de ser de graça
-- [ ] Postgres de dev de pé: `docker compose up -d && docker compose ps` mostra `banca-dev-db-1` healthy
-- [ ] `.env` existe (cópia de `.env.example`) com `DATABASE_URL` preenchida
-- [ ] Base da F0 verde: `pnpm lint`, `pnpm test`, `pnpm typecheck`, `pnpm guards`; `node -v` = 24.x no shell
+- [x] `docs/skills-map.csv` completo (§17.1): `projeto`, `fase` e `modo_avaliacao` nas **48** linhas —
+      **✅ fechado em 07/08/2026** com 46 blocos reais do admin (registro em `docs/skills-map-revisao.md`).
+      São 48 e não 49 porque a `corrige-castmember-python` se declara variante legada e não tem desafio
+      correspondente. Confira com um parser que respeite aspas — `awk -F,` erra as duas linhas com vírgula
+      dentro do valor:
+      `python3 -c "import csv;[print(r) for r in csv.DictReader(open('docs/skills-map.csv',encoding='utf-8')) if not(r['projeto'] and r['fase'] and r['modo_avaliacao'])]"`
+- [x] §17.5 respondido: **NestJS+Prisma confirmado pelo usuário em 07/08/2026**. PrimeVue e o nome
+      "Banca" seguem em aberto — só pesam na F6 e não bloqueiam esta fase
+- [x] Postgres de dev de pé: `docker compose up -d && docker compose ps` mostra `banca-dev-db-1` healthy
+- [x] `.env` existe (cópia de `.env.example`) com `DATABASE_URL` preenchida
+- [x] Base da F0 verde: `pnpm lint`, `pnpm test`, `pnpm typecheck`, `pnpm guards`; `node -v` = 24.x no shell
       da sessão (nvm não carrega em shell não-interativo — ver "Riscos")
 
 ## Decisões do plano que esta fase materializa
@@ -44,7 +47,16 @@ mais os defaults operacionais de `config`.
 
 ## Decisões a tomar nesta fase
 
-| # | Pergunta em aberto | Opções | Recomendação |
+> ✅ **As dez foram decididas com o usuário em 07/08/2026, todas conforme a recomendação.** A coluna
+> da direita deixou de ser sugestão e passou a ser a decisão. Reabrir qualquer uma exige registrar o
+> motivo aqui e no `docs/STATUS.md` — não decidir de novo em silêncio no meio da implementação.
+>
+> As três que o usuário quis discutir, e o que pesou: **D1** (Prisma em `apps/api/prisma/` — a API é o
+> único consumidor, `packages/db` seria cerimônia), **D4** (enums em `packages/shared` — o front não
+> pode depender do client Prisma) e **D8** (índice parcial em vez de regra de aplicação — §2.4:
+> colisão vira impossível, não proibida).
+
+| # | Pergunta | Opções | **Decisão (07/08/2026)** |
 |---|---|---|---|
 | D1 | Onde moram `schema.prisma`, migrations e client | `apps/api/prisma/` · `packages/db` · `prisma/` na raiz | `apps/api/prisma/` — a API é o único consumidor no MVP; pacote extra é cerimônia (CLAUDE.md, YAGNI) |
 | D2 | Se D1 = `apps/api`, o pacote nasce sem Nest — com o quê? | só `prisma/` + client + seed · bootstrap Nest já agora · `packages/db` para evitar a questão | Só `prisma/` + client + seed. Não é shell vazio (a F1 o preenche), então não colide com a decisão de 07/08 no STATUS nem com a regra dura 8; o bootstrap do Nest é a F4.0 |
@@ -205,6 +217,11 @@ Estado novo sem revisão do índice quebra este teste.
       `projeto,fase,skill_slug,modo_avaliacao,base_repo_url,timeout_s` — mesmo contrato já travado por
       `tests/skills-map.test.ts` (F0), que segue valendo: o seed respeita esse teste, não o substitui
 - [ ] Normalizar BOM e CRLF antes de dividir as linhas (o CSV é editado à mão, possivelmente no Windows)
+- [ ] **Parsear conforme RFC 4180, nunca com `split(',')`**: nome de desafio na plataforma contém vírgula
+      (`Do compose ao cluster: Docker, Kubernetes e Terraform`), e o casamento com o bloco colado é
+      literal — trocar a vírgula por outro caractere garantiria que o par nunca casa. Valor com vírgula
+      vai entre aspas e aspas internas são dobradas; `tests/skills-map.test.ts` (F0) já traz o parser e o
+      teste de aspas desbalanceadas, e o seed tem que ler igual
 - [ ] Recusar linha com número de colunas ≠ 6, reportando o número da linha
 - [ ] Recusar a **linha inteira** quando `projeto`, `fase`, `skill_slug` ou `modo_avaliacao` vier vazio, com
       o número da linha (contando o cabeçalho, como no teste da F0) e o nome do campo faltante (§13 F1);
@@ -218,10 +235,13 @@ Estado novo sem revisão do índice quebra este teste.
 
 **Testes:** `seed-skills-map.test.ts` com fixtures pequenas — CSV válido carrega N linhas; linha sem `fase`
 é recusada com a mensagem apontando linha e campo; linha com 5 colunas e modo fora do enum são recusados;
+**valor entre aspas com vírgula dentro chega ao banco com a vírgula**; aspas desbalanceadas são recusadas;
 **nada é escrito** quando há recusa; segunda execução é idempotente; linha removida vira `ativo = false`.
 
-**Pronto quando:** `pnpm db:seed` com o CSV real carrega 49 linhas e, com uma linha mutilada, sai ≠ 0 sem
-escrever nada.
+**Pronto quando:** `pnpm db:seed` com o CSV real carrega as linhas do arquivo e, com uma linha mutilada,
+sai ≠ 0 sem escrever nada. O CSV tem **48** linhas, não 49: a `corrige-castmember-python` se declara
+"variante genérica/legada" no próprio `SKILL.md` e não corresponde a desafio da plataforma, então não tem
+par para mapear (registro em `docs/skills-map-revisao.md`).
 
 ### F1.7 — `pg_trgm` e defaults de `config`
 

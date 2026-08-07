@@ -45,6 +45,8 @@ construção" (§2.4) e "nada destrutivo global" (§2.5) em código executável.
 | Timeout efetivo = `skills_map.timeout_s ?? config.timeout_job_padrao_s` | §5, §10.9 | F2.5 lê o override da skill e o default de `config`, ambos gravados pela F1 — nenhum literal de timeout no código |
 | Log do entrypoint vai para o job dir | §12 | F2.2 escreve `runner.log` dentro de `/workspace` |
 | Skill e `_shared` montados `:ro` a partir de `$SKILLS_DIR`, sem cópia nem symlink | §4, §8, Apêndice B v1.3 item 6 e v1.5 item 1 | F2.4 monta `$SKILLS_DIR/<skill_slug>:/workspace/skill:ro` e `$SKILLS_DIR/_shared:/workspace/_shared:ro`, abortando se qualquer um dos caminhos não existir |
+| Job dir montado **duas vezes**: em `/workspace` e no próprio caminho absoluto | §8, Apêndice B v1.6 item 1 (spike S3) | F2.4 passa os dois `-v`; F2.3 monta o comando canônico de compose com o caminho absoluto, não com `/workspace` — é o que impede o `./algo` do aluno de virar diretório vazio criado pelo daemon do host |
+| Stack do aluno não carrega `fc.job=<id>`, e sim `com.docker.compose.project=fc-job-<id>` | §8, Apêndice B v1.6 item 2 (spike S3) | Teardown (F2.6) e janitor (F2.7) varrem os dois — varrer só o label do job deixa a stack inteira órfã |
 
 ## Decisões a tomar nesta fase
 
@@ -131,6 +133,7 @@ construção" (§2.4) e "nada destrutivo global" (§2.5) em código executável.
 
 - [ ] `criarJobDir(correcaoId)`: cria `$JOBS_DIR/<id>/` com dono/permissão que o uid 1000 do runner consiga escrever; falha se o dir já existir
 - [ ] Escrever `job.json`: aluno, projeto/fase, `skill_slug`, `repo_url`, `commit_sha`, timeout efetivo, `compose_project = fc-job-<id>` e o comando canônico de compose já montado com `-p` e os dois `-f`
+- [ ] O comando canônico usa o **caminho absoluto do job dir**, não `/workspace` (plan §8, Apêndice B v1.6 item 1). O S3 provou que caminho relativo no compose do aluno resolve contra o diretório do arquivo e vai para o daemon do host: com `-f /workspace/...` o `./dados` do aluno vira `/workspace/dados`, que não existe no host, e o daemon monta um diretório vazio sem erro nenhum
 - [ ] `gerarOverrideNoports(compose)`: função pura que remove `ports:` e `container_name:` de **todos** os serviços e aponta a network default para `fc-job-<id>_net` com `external: true` (§8, §10.14, §10.15)
 - [ ] Tratar compose sem `networks:` declarada, com múltiplas networks e com serviços sem porta — o override nunca inventa serviço nem remove chave alheia
 - [ ] Registrar em `job.json` quais serviços tinham `container_name:` fixo (§10.15 pede o registro; o campo equivalente do dossiê é do agente, F3)
@@ -149,7 +152,8 @@ construção" (§2.4) e "nada destrutivo global" (§2.5) em código executável.
 
 - [ ] Wrapper de Docker com `execFile` (nunca string de shell: URL de repo e nome de aluno são dado externo), timeout em toda chamada e log com `job_id`
 - [ ] `docker network create fc-job-<id>_net --label fc.job=<id>` **antes** de qualquer container (§8, Apêndice B (06/08) item 1)
-- [ ] `docker create --name fc-job-<id> --label fc.job=<id> --cpus 2 --memory 2.5g` com os mounts do §8 (job dir → `/workspace`; `$SKILLS_DIR/<skill_slug>` → `/workspace/skill:ro`; `$SKILLS_DIR/_shared` → `/workspace/_shared:ro`; `/var/run/docker.sock`) e env `CLAUDE_CODE_OAUTH_TOKEN`, `FC_JOB_ID`
+- [ ] `docker create --name fc-job-<id> --label fc.job=<id> --cpus 2 --memory 2.5g` com os mounts do §8 (job dir → `/workspace`; job dir → **o próprio caminho absoluto**; `$SKILLS_DIR/<skill_slug>` → `/workspace/skill:ro`; `$SKILLS_DIR/_shared` → `/workspace/_shared:ro`; `/var/run/docker.sock`) e env `CLAUDE_CODE_OAUTH_TOKEN`, `FC_JOB_ID`
+- [ ] O mount-espelho do job dir no próprio caminho **não é redundância** (Apêndice B v1.6 item 1): é o que faz a resolução de caminho do compose significar a mesma coisa no runner e no daemon do host. Um teste do `job-controller.test.ts` trava os dois mounts — remover o espelho por "limpeza" reintroduz uma falha silenciosa
 - [ ] `docker network connect fc-job-<id>_net fc-job-<id>` e só então `docker start` (D6)
 - [ ] Abortar antes de criar qualquer recurso se `$SKILLS_DIR/<skill_slug>` ou `$SKILLS_DIR/_shared/devolutivas-guide.md` não existir — mount de caminho inexistente cria diretório vazio, e a correção rodaria sem critérios ou sem o guia de devolutivas, falhando em silêncio até a revisão humana (§8)
 - [ ] Jitter aleatório de 5–15s antes do start, com relógio e aleatório injetáveis para o teste (§8)
@@ -248,6 +252,7 @@ construção" (§2.4) e "nada destrutivo global" (§2.5) em código executável.
 | 13 | N correções do mesmo desafio de porta fixa | Netns próprio por runner (F2.4) | Aceite A2 |
 | 14 | Compose do aluno publica portas fixas | Override remove `ports:` (F2.3) | Aceite A2 + `override-noports.test.ts` |
 | 15 | `container_name:` fixo no compose | Override remove e `job.json` registra (F2.3) | `override-noports.test.ts` |
+| 16 | Bind mount relativo do aluno resolve no host, não no runner | Job dir montado também no próprio caminho absoluto e comando canônico de compose usando esse caminho (F2.3, F2.4) — confirmado em bancada pelo spike S3 e absorvido no §8 (Apêndice B v1.6 item 1). A parte do §10.16 sobre `lint --fix` sujar o repo é regra de prompt, F3 | `job-controller.test.ts` (os dois mounts) + Aceite A2 |
 | 17 | Repo gigante / clone lento | Clone 120s → `--depth 1` + `clone.json` (F2.2); virar gatilho é F7 | `runner-entrypoint.test.ts` |
 | 18 | Submodules quebrados | Clone tolera e registra em `clone.json` (F2.2) | `runner-entrypoint.test.ts` |
 | 19 | Disco enchendo | Janitor alerta < 15 GB e, < 5 GB, grava `pausa_global` como objeto com `motivo: "disco"` (F2.7, D9); quem obedece ao registro é a F4 | Aceite A5 (limiar rebaixado) |
@@ -279,7 +284,7 @@ construção" (§2.4) e "nada destrutivo global" (§2.5) em código executável.
 ## Testes que nascem nesta fase
 
 - `apps/api/src/jobs/override-noports.test.ts` — trava o contrato do override: `ports:` e `container_name:` somem de todos os serviços, a network default vira externa `fc-job-<id>_net`, nenhuma outra chave é tocada, e reaplicar o gerador dá o mesmo resultado.
-- `apps/api/src/jobs/job-controller.test.ts` — trava a ordem network → create → connect → start (a corrida do Apêndice B (06/08) item 1), o abort quando a skill não existe e a ausência do token nos logs.
+- `apps/api/src/jobs/job-controller.test.ts` — trava a ordem network → create → connect → start (a corrida do Apêndice B (06/08) item 1), o abort quando a skill não existe, a ausência do token nos logs e os **dois** mounts do job dir (`/workspace` e o caminho absoluto espelhado, Apêndice B v1.6 item 1).
 - `apps/api/src/jobs/coleta.test.ts` — trava os três desfechos de artefato (ausente, JSON inválido, válido), o fim detectado pelo marcador `resultado.json` e o desfecho de timeout quando o marcador não chega.
 - `apps/api/src/jobs/teardown.test.ts` — trava idempotência, ordem das camadas (sinal de encerramento antes da remoção) e escopo por label.
 - `apps/api/src/jobs/recuperacao.test.ts` — trava o comportamento do §10.12 e o contrato de `recuperarCorrecoesOrfas()` que a F4 consome, com o job dir preservado.

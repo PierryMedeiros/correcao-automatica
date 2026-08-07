@@ -39,8 +39,9 @@ descobrir hoje deixe as fases seguintes desatualizadas em silêncio.
   ela estiver pronta e verificada**, não no fim. O arquivo da fase é o mapa de retomada: uma sessão
   nova tem que conseguir continuar lendo só ele.
 - A cada etapa pronta, avise o usuário que dá para commitar — commit e push só a pedido dele, pela
-  skill `commit-e-push` (regra dura 9 do CLAUDE.md). Quando ele pedir, o resultado são commits
-  pequenos e atômicos, não um commitzão no fim da fase.
+  skill `commit-e-push` (regra dura 9 do CLAUDE.md). Avisar etapa a etapa é o que dá a ele a **chance**
+  de fazer commits pequenos em vez de um commitzão no fim da fase; o recorte de cada pedido é dele, e
+  a `commit-e-push` manda propor a divisão e perguntar antes de commitar.
 - Testes nascem junto com o código que testam — nunca "depois". Critérios na seção **Testes** abaixo.
 - Boas práticas por tecnologia deste projeto:
   - **NestJS**: toda entrada HTTP validada por DTO; controllers sem lógica; services finos; erros de

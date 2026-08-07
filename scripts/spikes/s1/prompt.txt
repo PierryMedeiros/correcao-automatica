@@ -1,0 +1,5 @@
+Leia /workspace/skill/SKILL.md primeiro, com o tool Read, e siga as instruções dele literalmente.
+
+Tudo o que o JSON de saída pede está no SKILL.md ou no próprio workspace — não invente nenhum valor
+e não deduza o que "provavelmente" está escrito. Ao terminar, /workspace/out.json tem que existir e
+ser JSON válido.

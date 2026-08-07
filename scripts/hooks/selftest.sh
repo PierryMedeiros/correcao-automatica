@@ -114,7 +114,9 @@ echo "5. segredo em conteúdo staged (regra dura 5) — deve BLOQUEAR"
 # Cada fixture mora na própria linha porque o escape `guard:fixture` é por linha e não cabe em
 # continuação com `\`. O prefixo da chave é montado em duas partes: escrito inteiro, o scanner
 # acusaria este arquivo.
-chave_falsa="ANTHROPIC_API_KEY=$(printf '%s%s' 'sk-' 'ant-teste123')"  # guard:fixture
+# As chaves falsas têm comprimento realista de propósito: o guard exige 32+ caracteres depois do
+# prefixo para separar credencial de documentação, então fixture curta não exercitaria a regra.
+chave_falsa="ANTHROPIC_API_KEY=$(printf '%s%s' 'sk-' 'ant-api03-FALSAfalsa0123456789abcdefGHIJKLMNopqrstuv')"  # guard:fixture
 token_falso="CLAUDE_CODE_OAUTH_TOKEN=oat01AbCdEf9876"  # guard:fixture
 verifica_staged 2 "chave e token reais staged" "$chave_falsa" "$token_falso"
 
@@ -141,9 +143,24 @@ echo "8. segredo escondido atrás de metacaractere — deve BLOQUEAR"
 # A regra do item 7 só dispensa a heurística de variável. A varredura por prefixo de chave roda
 # sobre a linha inteira e é independente dela — é isto que impede que o item 7 vire porta.
 verifica_staged 2 "chave real precedida de ponto" \
-  "ANTHROPIC_API_KEY=.$(printf '%s%s' 'sk-' 'ant-escondida999')"  # guard:fixture
+  "ANTHROPIC_API_KEY=.$(printf '%s%s' 'sk-' 'ant-oat01-ESCONDIDAescondida0123456789abcdefGHIJ')"  # guard:fixture
 verifica_staged 2 "token real na mesma linha de um grep" \
   "rode \`grep TOKEN .env\` e compare com CLAUDE_CODE_OAUTH_TOKEN=oat01ZzYyXx4321"  # guard:fixture
+
+echo "8b. formato da chave citado em documentação — deve PASSAR"
+# Documentar que o token começa com um prefixo não é vazar o token: são 6 caracteres depois do
+# prefixo, contra ~100 de uma credencial. Bloquear isso empurra para apagar a documentação de como
+# conferir o valor — que é justamente o que evita repetir o diagnóstico do `401 Invalid bearer
+# token`. O item 8 acima é o outro lado: chave de comprimento real continua bloqueada.
+verifica_staged 0 "prefixo do token citado em prosa" \
+  "o valor que vale é o $(printf '%s%s' 'sk-' 'ant-oat01-')… que o CLI imprime no fim"  # guard:fixture
+verifica_staged 0 "prefixo em frase de conferência" \
+  "**Verificar o formato**: o token começa com \`$(printf '%s%s' 'sk-' 'ant-oat01-')\`"  # guard:fixture
+# O prefixo solto em prosa passa; atribuído a uma variável de chave, não — aí quem bloqueia é a
+# heurística de variável, que é independente e continua sendo a defesa principal. `.env.example`
+# usa chave vazia, então não há caso legítimo de escrever valor mascarado nessa forma.
+verifica_staged 2 "prefixo mascarado atribuído a uma chave" \
+  "ANTHROPIC_API_KEY=$(printf '%s%s' 'sk-' 'ant-api03-')xxxxxxxxxxxx"  # guard:fixture
 
 echo "9. arquivo binário em conteúdo staged — deve BLOQUEAR"
 # Diff de binário não tem linha `+`: sem esta checagem por arquivo, tudo abaixo dela passa em

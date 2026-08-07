@@ -1,0 +1,33 @@
+# Compose SINTÉTICO, fazendo o papel do compose de um desafio de aluno no spike S3.
+# É o pior caso que o §8 precisa neutralizar, de propósito:
+#   - `ports:` fixas em todos os serviços  -> edge case §10.14
+#   - `container_name:` fixo em todos      -> edge case §10.15
+#   - bind mount relativo no `probe`       -> edge case §10.16 / fixture G9
+#
+# Não é um compose de aluno real: quando a F7 congelar os golden repos, o gerador de override da F2
+# passa a ser exercitado contra eles. Registrado como sintético em docs/spikes.md.
+services:
+  app:
+    image: busybox:1.36
+    container_name: desafio-app
+    ports:
+      - '8080:8080'
+    command: sh -c "mkdir -p /www && printf 'S3-APP-OK\n' > /www/index.html && httpd -f -p 8080 -h /www"
+
+  db:
+    image: postgres:16-alpine
+    container_name: desafio-db
+    ports:
+      - '5432:5432'
+    environment:
+      POSTGRES_PASSWORD: postgres
+
+  # Existe só para ser inspecionado com `docker compose config`: o caminho relativo `./dados`
+  # resolve contra o diretório do compose — que dentro do runner é `/workspace`, um caminho que
+  # não existe no host, onde o daemon de verdade está. O serviço NÃO é subido pelo run.sh.
+  probe:
+    image: busybox:1.36
+    container_name: desafio-probe
+    volumes:
+      - ./dados:/dados:ro
+    command: sh -c "ls -la /dados && sleep 3600"

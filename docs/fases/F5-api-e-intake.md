@@ -142,6 +142,7 @@ SSE. Nada disso tem tela ainda (F6) — é tudo REST verificável por `curl`.
 - [ ] Linha sem skill resolvida vem marcada com `skill_sugerida: null`, e `GET /api/skills` alimenta o dropdown de escolha manual (§9.1, §10.3)
 - [ ] Avisar duplicata: já existe submissão **ativa** (definição por complemento do §5) para `(aluno_email, projeto, fase)` (§10.5)
 - [ ] Avisar quando `repo_url` é igual ao `base_repo_url` da skill resolvida (§10.2) — aviso no preview, a decisão de `link_invalido` é da validação (F5.7, §6)
+- [ ] Mostrar a URL **normalizada** ao lado da colada quando as duas diferirem (§10.29): "colado `…/r/tree/master/node` · vamos clonar `…/r`". É o ponto mais barato de correção — o humano confirma antes de qualquer container subir
 - [ ] Bloco com campo faltante não invalida os outros: cada linha carrega seus próprios problemas (§10.23)
 
 **Testes:** e2e do preview com bloco completo, bloco sem repositório, par sem skill, duplicata ativa e texto com blocos válidos e inválidos misturados.
@@ -171,13 +172,16 @@ SSE. Nada disso tem tela ainda (F6) — é tudo REST verificável por `curl`.
 
 **Entrega:** submissão criada em `recebida` é validada sozinha e chega a `na_fila`, `link_invalido` ou `sem_skill` sem intervenção humana e sem gastar agente.
 
-**Arquivos:** `apps/api/src/validacao/validacao.service.ts`, `apps/api/src/validacao/git-ls-remote.ts`, `apps/api/src/devolutivas/template-link-invalido.ts`
+**Arquivos:** `packages/shared/src/normaliza-repo-url.ts`, `packages/shared/src/normaliza-repo-url.test.ts`, `apps/api/src/validacao/validacao.service.ts`, `apps/api/src/validacao/git-ls-remote.ts`, `apps/api/src/devolutivas/template-link-invalido.ts`
 
 **Tarefas**
 
 - [ ] Transicionar `recebida → validando` ao receber o disparo da F5.6, pelas transições da F4 (§6) — este serviço nunca escreve `submissoes.status` direto
-- [ ] Executar `git ls-remote <repo_url> HEAD` por `execFile` com argv separado — **nunca** `exec` com string montada, porque `repo_url` é entrada de terceiro —, timeout de 30 s por tentativa e no máximo 2 tentativas (§9.2 passo 1, §6, §10.1)
-- [ ] Falha nas 2 tentativas → `validando → link_invalido` com `status_detalhe` do motivo (repo inacessível/privado/inexistente) (§10.1)
+- [ ] `normalizaRepoUrl(bruta)` em `packages/shared`: função **pura**, sem rede, devolvendo `{ url, ref, subpasta, pr_numero }` (§10.29–31). Deliberadamente burra — corta o caminho a partir de `/tree/`, `/blob/`, `/pull/`, `/commit/`, tira `?query`, `#` e espaço nas pontas, e **passa inalterado** o que não reconhecer, deixando o `ls-remote` decidir. Não tenta adivinhar nem consertar host
+- [ ] Rodar a normalização **antes** do `ls-remote` (§9.2 passo 1): sem ela, cerca de 1 em 5 entregas reais falha o passo 1 e vira `link_invalido` com o repositório público perfeitamente acessível na mão
+- [ ] Executar `git ls-remote <url normalizada> HEAD` por `execFile` com argv separado — **nunca** `exec` com string montada, porque `repo_url` é entrada de terceiro —, timeout de 30 s por tentativa e no máximo 2 tentativas (§9.2 passo 1, §6, §10.1)
+- [ ] Guardar `ref`, `subpasta` e `pr_numero` junto da submissão como observação. O `pr_numero` é **insumo obrigatório** do prompt para as skills que avaliam pull request (§10.30, `corrige-ci-sonarcloud`); `ref` e `subpasta` vão como contexto e **nunca** viram troca de ref — o SHA pinado manda (§9.2, Apêndice A)
+- [ ] Falha nas 2 tentativas → `validando → link_invalido` com `status_detalhe` do motivo (§10.1). Quando a URL nem parecer repositório — aplicação publicada, link aleatório — usar `status_detalhe` próprio e o texto específico do §10.31, não o genérico de "inacessível"
 - [ ] Pinar `commit_sha` a partir do `HEAD` devolvido pelo `ls-remote` e gravá-lo na submissão — é o SHA que a correção faz checkout (§5, §10.4)
 - [ ] Comparar `repo_url` com `skills_map.base_repo_url` da skill resolvida; igualdade → `validando → link_invalido` com `status_detalhe` "link do repositório base" (§10.2)
 - [ ] Resolver a skill por `(projeto, fase)` em `skills_map` ativo ou usar a skill escolhida à mão no preview; sem nenhuma das duas → `validando → sem_skill` (§6, §10.3) — a notificação vem da transição (F4)
@@ -185,7 +189,29 @@ SSE. Nada disso tem tela ainda (F6) — é tudo REST verificável por `curl`.
 - [ ] Renderizar a devolutiva de `link_invalido` a partir do template global lido de `config`, injetando o motivo, com `correcao_id` **nulo** (§6, §5) — a chave é `devolutiva_link_invalido_template`, semeada na F1.7 — se faltar, o conserto é rodar o seed da F1, nunca alterar o banco à mão (regra dura 4)
 - [ ] Emitir `submissao.updated` a cada transição pelo barramento da F5.3
 
-**Testes:** e2e dos quatro desfechos a partir de `recebida` (repo `file://` válido → `na_fila` com SHA pinado; repo inexistente → `link_invalido` após 2 tentativas; `repo_url` igual ao `base_repo_url` → `link_invalido` com o motivo próprio; par sem skill → `sem_skill`); unidade do wrapper de `ls-remote` (timeout e contagem de tentativas com relógio injetado, argv sem shell); renderização do template com cada motivo.
+**Testes:** `normaliza-repo-url.test.ts` — tabela entrada→saída com as **formas reais colhidas do admin
+em 07/08/2026** (donos anonimizados; o que o teste trava é o formato):
+
+| Entrada | `url` | `ref` | `subpasta` | `pr_numero` |
+|---|---|---|---|---|
+| `https://github.com/a/r` | igual | — | — | — |
+| `https://github.com/a/r.git` | igual | — | — | — |
+| `https://github.com/a/r ` (espaço no fim) | `…/a/r` | — | — | — |
+| `https://github.com/a/r#` | `…/a/r` | — | — | — |
+| `https://github.com/a/r/tree/main` | `…/a/r` | `main` | — | — |
+| `https://github.com/a/r/tree/modulo-6-django-api-parte-2` | `…/a/r` | `modulo-6-…` | — | — |
+| `https://github.com/a/r/tree/master/node` | `…/a/r` | `master` | `node` | — |
+| `https://github.com/a/r/tree/main/src/core/genre` | `…/a/r` | `main` | `src/core/genre` | — |
+| `https://github.com/a/r/pull/7` | `…/a/r` | — | — | `7` |
+| `https://l01-000.southamerica-east1.run.app/?cep=01310-930` | inalterada | — | — | — |
+| `https://gitlab.com/a/r/-/tree/main` (host não previsto) | inalterada | — | — | — |
+
+Mais: e2e dos desfechos a partir de `recebida` (repo `file://` válido → `na_fila` com SHA pinado; URL
+`/tree/main` de repo válido → **`na_fila`**, não `link_invalido`; repo inexistente → `link_invalido`
+após 2 tentativas; URL que não é repositório → `link_invalido` com o `status_detalhe` do §10.31;
+`repo_url` igual ao `base_repo_url` → `link_invalido` com o motivo próprio; par sem skill →
+`sem_skill`); unidade do wrapper de `ls-remote` (timeout e contagem de tentativas com relógio
+injetado, argv sem shell); renderização do template com cada motivo.
 
 **Pronto quando:** as quatro submissões do teste saem de `recebida` sozinhas para o estado do §6 correspondente, as de `link_invalido` têm devolutiva com `correcao_id` nulo, e nenhum container `fc-job-*` foi criado em nenhum dos quatro caminhos.
 

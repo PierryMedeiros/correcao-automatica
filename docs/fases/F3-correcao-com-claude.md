@@ -17,7 +17,7 @@ devolutiva-rascunho no formato da skill, persistidos e auditáveis.
 ## Pré-condições
 
 - [ ] F1 e F2 marcadas ✅ em `docs/fases/README.md`
-- [ ] Spike S1 verde em `docs/spikes.md` **com a flag de permissão decidida** (§8: `--dangerously-skip-permissions` vs `--allowedTools`) — sem essa decisão não há invocação a escrever
+- [x] Spike S1 verde em `docs/spikes.md` **com a flag de permissão decidida** (§8: `--dangerously-skip-permissions` vs `--allowedTools`) — sem essa decisão não há invocação a escrever. **Decidida: `--allowedTools`**, com `Read,Write,Bash` provados; ampliar a lista para o que as skills reais exigem é decisão desta fase
 - [ ] `.env` tem `CLAUDE_CODE_OAUTH_TOKEN` válido (§17.3): repetir a invocação mínima do S1 e obter saída do CLI, não erro de credencial
 - [ ] Imagem do runner construída: `docker image inspect $RUNNER_IMAGE` responde
 - [ ] Job fake da F2 roda fim a fim (é o esqueleto que esta fase preenche)
@@ -39,6 +39,7 @@ devolutiva-rascunho no formato da skill, persistidos e auditáveis.
 | Execução LLM é fronteira trocável: CLI headless hoje, SDK/API key depois | §4, CLAUDE.md ("Arquitetura de código") | A invocação nasce atrás de `LlmExecutor`; `ClaudeCliExecutor` é a única implementação aqui, e nenhuma quarta interface é aberta |
 | `skills_map` é a fonte da verdade do modo; divergência do dossiê é **gatilho**, não erro | §5, §7, §12, Apêndice B v1.3 item 7 | O validador não reprova por divergência de modo: reporta o fato, que a F7 transforma em gatilho |
 | Comando canônico de compose entregue pronto, com a network externa já criada | §8, §9.2, Apêndice B (06/08) item 1 | O prompt não pede ao agente que invente `-p` nem gere override; ele recebe a linha pronta |
+| O comando canônico usa o caminho **absoluto** do job dir, não `/workspace` | §8, Apêndice B v1.6 item 1 (spike S3) | F3.3 monta a linha com o caminho espelhado; é o que impede um `./algo` no compose do aluno de virar diretório vazio criado pelo daemon do host |
 | Contexto de tentativa anterior: critérios não mudam, verificação nominal + calibragem de tom | §9.5, Apêndice A | Bloco opcional do prompt, montado só quando `anterior_id` existe |
 | `historico_nao_avaliado` quando o clone caiu no fallback shallow | §7, §9.2, §10.17 | O entrypoint (F2) sinaliza; o prompt obriga o agente a propagar o campo no dossiê |
 | Tudo que virou código sai do prompt (slots, exit 75, `ss`/`lsof`, override manual, sudo) | Apêndice A | A remoção é verificável por `grep` contra `docs/legado/corretor-desafios.md` |
@@ -54,7 +55,7 @@ devolutiva-rascunho no formato da skill, persistidos e auditáveis.
 | D3 | De onde vem o `--model` na F3, se o run só é orquestrado na F4 | (a) campo `modelo` no payload de entrada do Job Controller, preenchido pelo harness; (b) ler `runs.modelo` já agora | (a) — a F4 passa a preencher o mesmo campo a partir de `runs.modelo` sem mudar assinatura |
 | D4 | O que a F3 persiste no banco | (a) só artefatos no job dir; (b) linha em `correcoes` + `devolutivas.texto_agente` | (b) — as tabelas existem desde a F1, o aceite pede veredito e devolutiva, e persistir agora evita reescrever o fechamento na F4. Transições de estado, gatilhos e política de revisão continuam fora |
 | D5 | Onde mora o validador do dossiê e o que acontece com o que a F2 usou no job fake | (a) `packages/shared` (schema + validador puro), API só orquestra; (b) validador dentro da API | (a) — o §7 já nomeia `packages/shared/dossie.schema.json`, e F5/F6 vão querer os tipos. O que a F2 usou como stub é substituído nesta fase |
-| D6 | Como o retry corretivo obtém o `session_id` para o `--resume` | (a) parsear o evento inicial do `transcript.jsonl`; (b) fixar `--session-id <uuid>` gerado pelo sistema na invocação, se o CLI aceitar | (b) quando o S1 confirmar o suporte (determinístico, não depende de formato de transcript), com (a) como fallback. Registrar o que valeu em `docs/spikes.md` |
+| D6 | Como o retry corretivo obtém o `session_id` para o `--resume` | (a) parsear o evento inicial do `transcript.jsonl`; (b) fixar `--session-id <uuid>` gerado pelo sistema na invocação, se o CLI aceitar | O S1 provou **(a)** ponta a ponta no CLI 2.1.224: o `session_id` está na primeira linha (`type: "system", subtype: "init"`) e o `--resume` com ele reescreveu a saída na mesma sessão. **(b) não foi testado** — se a fase quiser o caminho determinístico, testar `--session-id` é trabalho desta fase, com (a) como fallback já validado |
 | D7 | Captura de custo/uso por correção, que o §15 pede medir e o §5 não tem onde guardar | (a) não persistir agora — o dado fica no transcript; (b) criar coluna em `correcoes` (muda o §5) | (a) — o transcript é auditável e a agregação é F8; coluna nova exigiria mudar o §5 antes |
 | ~~D8~~ | Se "estado atual da branch main" das skills vence o SHA pinado | — | **Resolvida no plano (v1.5, Apêndice A)**: não vence. O prompt v2 declara a precedência do SHA pinado e proíbe `fetch`/troca de ref; a skill é fonte de critério, não de infraestrutura. As 49 skills não são editadas. O número fica reservado — o arquivo o referencia |
 
@@ -110,7 +111,7 @@ devolutiva-rascunho no formato da skill, persistidos e auditáveis.
 - [ ] Resolver `skill_slug` → `$SKILLS_DIR/<skill_slug>` e **falhar antes do `docker run`** se `SKILL.md` não existir (falha alta e barata, no espírito do seed da F1)
 - [ ] Conferir que o `docker create` da F2.4 já monta `$SKILLS_DIR/_shared` em `/workspace/_shared:ro` e aborta se o guia não existir (§8); se a F2 tiver sido implementada sem isso, o conserto é lá — esta fase só depende do mount
 - [ ] Preencher o template com os dados do job: aluno, projeto+fase, skill, `commit_sha`, caminho do clone (`/workspace/repo`), caminho do dossiê (`/workspace/dossie.json`)
-- [ ] Montar o comando canônico de compose com `-p fc-job-<id>`, o compose do aluno e o override noports gerado pela F2, nos caminhos como vistos de dentro do runner
+- [ ] Montar o comando canônico de compose com `-p fc-job-<id>`, o compose do aluno e o override noports gerado pela F2, nos **caminhos absolutos do job dir** — não em `/workspace` (plan §8, Apêndice B v1.6 item 1). O S3 provou em bancada que o compose resolve caminho relativo do aluno contra o diretório do arquivo e entrega o resultado ao daemon do host: `-f /workspace/...` faz o `./algo` do aluno virar um diretório vazio criado pelo daemon, sem erro nenhum. O job dir é montado nos dois caminhos justamente para o comando canônico poder usar o absoluto
 - [ ] Garantir que nenhum valor de `.env` (token, `DATABASE_URL`) seja interpolado no prompt — regra dura 5
 - [ ] Falhar a montagem se sobrar qualquer placeholder não substituído
 
@@ -128,7 +129,9 @@ devolutiva-rascunho no formato da skill, persistidos e auditáveis.
 
 - [ ] Declarar `LlmExecutor` com duas operações: `corrigir(job)` — modelo, job dir e `prompt.txt` — e `retomar(session_id, mensagem)`, ambas devolvendo `exit_code`, `session_id` e caminho do transcript. É uma das três fronteiras de inversão autorizadas pelo CLAUDE.md ("Arquitetura de código": `OrigemDriver`, `EnvioDriver`, `LlmExecutor`); nenhuma quarta interface entra junto
 - [ ] Implementar `ClaudeCliExecutor`: `corrigir` monta a linha do CLI no seam `FC_PAYLOAD_CMD` do entrypoint (F2, D4) e lê o desfecho no job dir; `retomar` reinvoca por `docker exec` no runner ainda vivo. Todo conhecimento de flag do CLI mora aqui — Job Controller e fechamento falam só com a interface
-- [ ] Invocar conforme §8: `claude -p "$(cat prompt.txt)" --model <modelo> --output-format stream-json --verbose > /workspace/transcript.jsonl`, com a flag de permissão definida no S1
+- [ ] Invocar conforme §8: `claude -p "$(cat prompt.txt)" --model <modelo> --output-format stream-json --verbose > /workspace/transcript.jsonl`, com a flag de permissão definida no S1 (`--allowedTools`)
+- [ ] Definir a allowlist de tools que as skills reais exigem, rodando G1–G3 e olhando o resultado — `Read,Write,Bash` é só o que o S1 provou com carga sintética; correção de verdade tende a precisar de `Glob`, `Grep` e `Edit`
+- [ ] O extrator do transcript devolve também `permission_denials`, e array não-vazio é tratado como sinal, não como linha de log. Em `-p` não há quem responda ao pedido de permissão: a tool é **negada e a execução continua**, terminando com exit 0 — sem isso, uma skill que precise de uma tool fora da lista produz correção pior sem nenhum erro no caminho (spike S1)
 - [ ] Passar o modelo pelo caminho decidido em D3 (variável de ambiente do container, junto de `FC_JOB_ID`)
 - [ ] Persistir o exit code do `claude` em arquivo no job dir, para o Job Controller ler mesmo se o container morrer
 - [ ] Aplicar D6: fixar ou extrair o `session_id` e deixá-lo disponível ao Job Controller antes do fechamento

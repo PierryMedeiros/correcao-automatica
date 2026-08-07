@@ -2,7 +2,7 @@
 
 Sistema de correção assistida por IA para desafios de alunos da Full Cycle.
 
-- Versão: 1.5 — Agosto/2026
+- Versão: 1.7 — Agosto/2026
 - Nome-código: "Banca" (a banca que corrige). Provisório; trocar depois é um find-replace.
 - Status: documento vivo. Mudança de arquitetura passa por aqui antes de virar código.
 - Envelhecimento: quando uma fase é marcada como implementada, o **código** passa a ser a
@@ -283,6 +283,7 @@ docker run -d --name fc-job-<id> \
   --label fc.job=<id> \
   --cpus 2 --memory 2.5g \
   -v <job_dir>:/workspace \
+  -v <job_dir>:<job_dir> \
   -v $SKILLS_DIR/<skill_slug>:/workspace/skill:ro \
   -v $SKILLS_DIR/_shared:/workspace/_shared:ro \
   -v /var/run/docker.sock:/var/run/docker.sock \
@@ -292,6 +293,8 @@ docker run -d --name fc-job-<id> \
 
 - **Rede**: o runner nasce na bridge default (egress para dependências e APIs externas dos enunciados) e é conectado também à `fc-job-<id>_net` (abaixo). O namespace de rede é próprio: `localhost:8080` dentro dele é só dele — N correções do mesmo desafio de processo direto (ex.: Client-Server-API) coexistem.
 - **Stacks de compose** dos alunos sobem no daemon do host (socket montado) com `-p fc-job-<id>` e um override gerado pelo sistema que (a) remove `ports:` e `container_name:` de todos os serviços (evolução do `fc-compose-noports.sh`) e (b) aponta a network default do compose para uma network externa `fc-job-<id>_net`, criada pelo Job Controller **antes** de subir o runner. Essa sequência elimina a corrida: a network nasce primeiro, o runner é conectado a ela na criação, e a stack — subida depois, pelo agente, com o comando canônico fornecido pronto no prompt — já nasce dentro dela. O agente alcança os serviços por hostname do compose (`curl http://app:8080`), nunca por porta de host.
+- **Job dir montado duas vezes, e a segunda não é redundância** (spike S3). O daemon que sobe a stack é o do **host**: todo caminho que o compose resolve de dentro do runner é interpretado do lado de lá. Um `./dados` no compose do aluno resolve contra o diretório do arquivo — `/workspace/...` — que não existe no host, e o daemon cria um diretório vazio nesse caminho em vez de montar os arquivos do aluno; a stack sobe, o teste passa em branco e ninguém vê o erro. Por isso o job dir é montado também **no seu próprio caminho absoluto**, idêntico dos dois lados, e é esse caminho que o comando canônico de compose no prompt usa. `/workspace` continua sendo o caminho estável de tudo o que é do sistema (skill, `_shared`, `dossie.json`, transcript); o caminho-espelho existe só para que a resolução de caminho do compose signifique a mesma coisa no runner e no daemon.
+- **Containers da stack do aluno não carregam `fc.job=<id>`** (spike S3): quem os cria é o compose, que rotula com `com.docker.compose.project=fc-job-<id>`. Teardown e janitor varrem os **dois** — label do job para o que o sistema criou, project do compose para o que o agente criou. Varrer só `fc.job=<id>` deixa a stack inteira órfã.
 - **Autonomia**: dentro do runner o agente é instruído: "você está sozinho nesta máquina; porta ocupada é processo seu, resolva à vontade; nunca mate processo que você não criou" (cinto e suspensório — por construção não há vizinhos no netns dele).
 - **Invocação**: `claude -p "$(cat prompt.txt)" --model <modelo_do_run> --output-format stream-json --verbose > /workspace/transcript.jsonl`, com permissões liberadas para execução não-assistida (flag exata — `--dangerously-skip-permissions` vs. modo `--bare` + `--allowedTools` — é decisão do Spike S1). O container é a fronteira de segurança, não a permissão do CLI.
 - **Skill**: montada RO em `/workspace/skill`; o prompt manda ler `/workspace/skill/SKILL.md` primeiro e seguir literalmente (inclusive `devolutivas.md` e demais arquivos citados por ela). Não dependemos da descoberta automática de skills em modo headless — funciona com o tool Read, que sempre existe.
@@ -314,7 +317,7 @@ Serve a plataforma FC (enquanto não há endpoints) e a segunda plataforma de cu
 
 ### 9.2 Pipeline de uma correção (caminho feliz)
 
-1. Validação: `git ls-remote <url>` (timeout 30s, 2 tentativas); compara com `base_repo_url`; pina `commit_sha` (HEAD).
+1. Validação: **normaliza a URL** (§10.29) e então `git ls-remote <url>` (timeout 30s, 2 tentativas); compara com `base_repo_url`; pina `commit_sha` (HEAD). A normalização vem antes porque o campo `Repositório:` do admin frequentemente traz a URL da barra de endereço (`/tree/<branch>/<subpasta>`, `/pull/<n>`, `?query`, `#`), que não é clonável — e sem ela esse passo falharia em cerca de 1 em 5 entregas reais.
 2. Resolve skill via skills_map (ou usa a manual). Enfileira no pg-boss com prioridade FIFO.
 3. Worker pega o job → Job Controller cria `job_dir` em `$JOBS_DIR/<id>/` e escreve nele o `prompt.txt` (montado de `runner/prompt-template.md` + dados do job: aluno, desafio, skill, SHA, comando canônico de compose com `-p` e override, contexto de tentativa anterior se houver) e o override noports gerado; cria a network `fc-job-<id>_net`; sobe o runner (§8) e o conecta a ela.
 4. Entrypoint do runner: clona o repo em `/workspace/repo` (clone completo, timeout 120s; se falhar por tamanho, fallback `--depth 1` e marca `historico_nao_avaliado` — skills com critério de Git Flow precisam de histórico); `git checkout <commit_sha>`; `--recurse-submodules` tolerante a falha; invoca o `claude -p` com o `prompt.txt`; escreve `resultado.json` com o exit code e **permanece vivo** aguardando o sinal de encerramento (§8).
@@ -365,6 +368,9 @@ Match automático por (aluno_email, projeto, fase) contra a submissão anterior 
 | 26 | Skill exige execução, dossiê diz que só leu | Gatilho de coerência (§7) → força revisão |
 | 27 | 3+ correções com o MESMO gatilho no mesmo run | Banner destacado no dashboard + notificação (indica skill ambígua, não 3 alunos errando igual); humano decide pausar |
 | 28 | WSL suspende / máquina dorme no meio | Runbook: desativar suspensão durante runs; jobs interrompidos caem no caso 12 |
+| 29 | URL do repositório não é clonável (`/tree/<branch>[/<subpasta>]`, `/blob/`, `/pull/<n>`, `/commit/`, `?query`, `#`, espaço nas pontas) | Normalizada por função pura antes do `ls-remote` (§9.2 passo 1): corta o caminho a partir do verbo do GitHub e limpa as pontas; formato desconhecido passa **inalterado** e o `ls-remote` decide. O preview mostra a URL normalizada quando ela diferir da colada, para o humano confirmar antes de qualquer coisa rodar. `<branch>` e `<subpasta>` são guardados como observação e vão ao prompt como contexto — **nunca** como troca de ref: o SHA pinado manda (Apêndice A), e as skills exigem o código na `main` |
+| 30 | A entrega é um pull request, não um repositório | Entrega **legítima** para desafios cuja skill avalia o PR (ex.: `corrige-ci-sonarcloud`, que consulta estado do PR e branch protection via `gh`). Normaliza para o repositório, guarda o `pr_numero` e o passa ao prompt — descartá-lo tira da skill o que ela precisa avaliar |
+| 31 | A URL entregue não é repositório nenhum (aplicação publicada, link aleatório) | `link_invalido` como no caso 1, mas com `status_detalhe` próprio e devolutiva específica ("você enviou a URL da aplicação publicada, não do repositório"). Distinguir importa: o caso 1 é "não consegui acessar", este é "isso não é um repositório" |
 
 ## 11. Segurança e privacidade
 
@@ -397,7 +403,7 @@ A separação é deliberada: o plano registra arquitetura e intenção, que não
 
 Estimativas em dias úteis de foco, solo com apoio de IA; ver disclaimer ao final da seção.
 
-### F0 — Fundação e spikes (1–2d) ⏳ em andamento (iniciada 2026-08-07)
+### F0 — Fundação e spikes (1–2d) ✅ implementada em 2026-08-07
 
 Repo de pé e os três maiores riscos técnicos provados antes de escrever o sistema: **S1** Claude headless em container com plano Max, **S2** isolamento de rede por container, **S3** compose sem portas publicadas apontando para network externa pré-criada — exatamente a topologia do §8.
 
@@ -405,7 +411,7 @@ S1 é o risco nº 1 do projeto: se travar, tudo para até resolver. O runner de 
 
 **Depende de:** nada — é a primeira fase
 
-**Plano executável:** [`docs/fases/F0-fundacao-e-spikes.md`](fases/F0-fundacao-e-spikes.md)
+**Plano executável:** [`docs/fases/F0-fundacao-e-spikes-concluida.md`](fases/F0-fundacao-e-spikes-concluida.md)
 
 ### F1 — Banco e domínio (1–2d) ⬜ não iniciada
 
@@ -552,11 +558,11 @@ Ativar o receptor de webhook (payloads reais → `webhook_payloads` → escrever
 
 ## 17. Ações do Pierry (destravam fases)
 
-1. Completar `docs/skills-map.csv` — 49 linhas já vêm com `skill_slug` e com `modo_avaliacao` sugerido em 14 delas; falta preencher `projeto` e `fase` de todas, revisar os 14 modos sugeridos, classificar os 35 restantes e apontar `base_repo_url`/`timeout_s` onde fizer sentido. Destrava F1.
+1. ~~Completar `docs/skills-map.csv`~~ **Feito em 07/08/2026**: 48 linhas completas, conferidas contra 46 blocos reais do admin (`docs/skills-map-revisao.md`). Texto original: 49 linhas já vêm com `skill_slug` e com `modo_avaliacao` sugerido em 14 delas; falta preencher `projeto` e `fase` de todas, revisar os 14 modos sugeridos, classificar os 35 restantes e apontar `base_repo_url`/`timeout_s` onde fizer sentido. Destrava F1.
 2. Coletar e congelar os golden repos G1–G10 — destrava os aceites de F3/F7.
-3. Rodar `claude setup-token` e guardar o token no `.env` — destrava S1.
+3. ~~Rodar `claude setup-token` e guardar o token no `.env` — destrava S1.~~ **Feito em 07/08/2026**, e o S1 passou com ele. Atenção ao refazer quando o token expirar (~1 ano): o valor que vale é o `sk-ant-oat01-…` que o CLI imprime no fim, não o código que o navegador exibe no meio do fluxo — trocar os dois dá `401 Invalid bearer token`.
 4. Ajustar `.wslconfig` (`processors=6`, manter `memory=10GB`, `swap=8GB`) e desativar suspensão — destrava testes de paralelismo reais.
-5. Validar as decisões tomadas neste plano que ainda são reversíveis de graça: NestJS+Prisma, PrimeVue, nome "Banca".
+5. Validar as decisões tomadas neste plano que ainda são reversíveis de graça. **NestJS+Prisma: confirmado em 07/08/2026**, e a F1 crava o Prisma. PrimeVue e o nome "Banca" seguem em aberto — só pesam na F6.
 6. ~~Confirmar se as skills declaram o modo de avaliação no frontmatter.~~ **Respondido em 07/08/2026: não declaram** — nenhuma das 49 tem campo de modo. Decidido não alterá-las: o `skills_map` é a fonte da verdade do modo, e o §7 protege contra CSV errado (o dossiê relata o modo que a skill exigiu; divergência vira gatilho).
 7. Decidir o destino do diretório de skills antes da F8. Verificado em 07/08/2026: `SKILLS_DIR` aponta para `/home/pierry/fullcycle/.claude/skills`, que **já é repositório git próprio** — versionamento resolvido. O que fica em aberto é ele morar dentro de uma pasta de configuração de ferramenta (`.claude/`): funciona na máquina local, mas quando a F8 tirar o sistema daqui o caminho vira config de servidor e esse acoplamento precisa sair.
 
@@ -616,6 +622,45 @@ não detecta, porque ele compara status e dependências, não conteúdo:
    sistema aceitaria exatamente um run na vida. `finalizado` passa a ser automático quando todo o lote
    atinge terminal de fato; `pausado`, retomado e `cancelado` são humanos. Não existe "finalizar" como
    ação humana: encerrar com pendência é cancelar, e o nome tem que dizer a verdade (§1, meta 3).
+
+Revisão adicional em 07/08/2026 (v1.6), com os **spikes da F0 rodados**. Diferente das anteriores,
+estas duas não vieram de releitura: vieram de bancada, e cada uma tem saída de comando em
+[`docs/spikes.md`](spikes.md). O §8 estava certo na intenção e errado no detalhe — a correção entra
+antes da F2 escrever o Job Controller, que é exatamente o que o S3 existia para permitir:
+
+1. **Caminho relativo no compose do aluno resolvia no lugar errado** (§8). O S3 confirmou o que o
+   §10.16 só suspeitava: com o job dir montado apenas em `/workspace`, o compose rodando dentro do
+   runner resolve `./dados` para `/workspace/dados` e manda esse caminho ao daemon do **host**, onde
+   ele não existe. O daemon não recusa — cria um diretório vazio e monta ele. A stack sobe, o
+   serviço do aluno roda sem os arquivos dele, e a correção avalia um ambiente que não é o do aluno,
+   sem nenhum erro no caminho. O job dir passa a ser montado **também no próprio caminho absoluto**,
+   idêntico nos dois lados, e o comando canônico de compose no prompt usa esse caminho; `/workspace`
+   segue sendo o caminho estável do que é do sistema. Alternativa descartada: reescrever os `volumes:`
+   relativos no override gerado — resolve o compose e não resolve um `docker run -v ./x:/y` que o
+   agente digite, além de exigir tratar sintaxe curta, longa e volume nomeado.
+2. **A stack do aluno não é alcançável por label do job** (§8). Quem cria esses containers é o
+   compose, que rotula com `com.docker.compose.project=fc-job-<id>` e não com `fc.job=<id>`. Um
+   teardown ou janitor escrito só sobre o label do job deixaria a stack inteira órfã — e a regra dura
+   1 fecha a saída fácil de limpar com prune. Passa a ser explícito que as duas varreduras existem e
+   são complementares. O prefixo `fc-job-` de nome, que o §3 já usava, continua pegando os dois.
+
+Revisão adicional em 07/08/2026 (v1.7), a partir de **46 blocos reais do admin da FC** colhidos para
+completar o `skills_map` (§17.1). Primeira vez que o plano encosta em dado de produção; o levantamento
+inteiro está em [`INTEGRATION.md`](INTEGRATION.md). Um achado mexeu no plano:
+
+1. **O campo `Repositório:` frequentemente não é clonável** (§9.2 passo 1, §10.29–31). Em cerca de 1 em
+   5 entregas o aluno cola a URL da barra de endereço do GitHub — `/tree/<branch>/<subpasta>`,
+   `/pull/<n>`, com `?query` ou `#`. O `git ls-remote` do passo 1 falha nelas, e como esse passo roda
+   **antes de existir agente** (§10.1 manda template "sem agente"), a submissão nunca chegaria a
+   alguém que soubesse resolver. Reprovar por "repositório inacessível" um repo público perfeitamente
+   acessível é justamente a devolutiva errada que o §1 existe para evitar. Entra uma normalização
+   deliberadamente burra antes do `ls-remote`, mais dois casos que o §10 não tinha: entrega que é PR
+   (legítima, e o `pr_numero` é insumo da skill) e entrega que não é repositório (devolutiva própria).
+2. **Descartado no caminho:** a ideia de o `<branch>` da URL virar candidato a checkout. Ela contraria
+   o §9.2 (SHA pinado no intake) e o Apêndice A (o prompt v2 proíbe `fetch` e troca de ref), e as
+   próprias skills exigem o código na `main`. Aluno que aponta para outra branch está violando regra de
+   entrega, e quem julga isso é a skill com o agente — não a infraestrutura. Registrado aqui porque a
+   versão errada chegou a ficar escrita nos documentos de apoio antes de o Pierry apontar.
 4. **A proibição de prune volta ao prompt do corretor** (Apêndice A). Ela havia saído com a
    justificativa de que "o agente nem tem como" — errada: o §8 monta o socket do host no runner, o que
    lhe dá poder total sobre o daemon. Não é redundância com a regra dura 1 nem com o guard de

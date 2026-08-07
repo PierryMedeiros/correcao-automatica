@@ -53,7 +53,14 @@ adicionadas=$(printf '%s' "$diff_alvo" | grep -E '^\+' | grep -vE '^\+\+\+' | gr
 # O literal é montado em duas partes de propósito: escrito inteiro, este script dispararia
 # contra si mesmo no primeiro commit que o incluísse.
 prefixo_anthropic='sk-''ant-'
-chaves=$(printf '%s' "$adicionadas" | grep -E "${prefixo_anthropic}[A-Za-z0-9_-]+" || true)
+
+# O comprimento é o que separa credencial de documentação. Uma chave real tem ~100 caracteres
+# depois do prefixo; citar o formato numa doc ("o token começa com sk-ant-oat01-") tem 6, e
+# mascarar com xxxxx não passa de ~15. Sem esse piso o guard bloqueia a própria documentação de
+# como conferir o token — foi o falso positivo que travou o commit da F0 em 07/08/2026, e a saída
+# fácil seria apagar a documentação que evita o próximo `401 Invalid bearer token`.
+# 32 fica com folga dos dois lados. O selftest prova as duas pontas.
+chaves=$(printf '%s' "$adicionadas" | grep -E "${prefixo_anthropic}[A-Za-z0-9_-]{32,}" || true)
 
 # Valores que são claramente marcador, não segredo: vazios (o regex abaixo já exige valor
 # não-vazio), mascarados, interpolações de shell e a senha pública do Postgres de dev (plan F0).
