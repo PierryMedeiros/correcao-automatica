@@ -22,7 +22,10 @@ de deixar submissão em `corrigindo`, e o run acaba: lote inteiro terminal vira 
 - [ ] `apps/api` existe como pacote TypeScript com Prisma Client, Job Controller e janitor (F1 D2, F2 D2), ainda sem `main.ts` nem DI — o bootstrap do Nest é a etapa **F4.0** desta fase, não pré-condição
 - [ ] `correcoes.transcript_path` é **NOT NULL** (F1, §5): toda linha de `correcoes` — inclusive a marcada `nao_executada` do §10.10 — nasce com o caminho do job dir. Se em algum cenário a F4 precisar criar a linha antes de haver job dir, isso é divergência do §5 e muda no plano primeiro. `finished_at` e `duracao_s`, ao contrário, são nulos enquanto a correção está `rodando`
 - [ ] Job Controller (F2) expõe `abortarJob` (kill + teardown por `fc.job=<id>`) e o harness `pnpm job-fake`, com o seam `FC_PAYLOAD_CMD`, continua rodando
+      · a superfície entregue pela F2 é `prepararJob`, `subirRunner`, `iniciarJob`, `acompanharJob`, `executarJob` (subir + acompanhar, com teardown em `finally`), `encerrarJob` e `abortarJob`. O worker da F4.4 consome `prepararJob` + `executarJob`; `abortarJob` é o que cancelamento (F4.7) e substituição (§10.5) chamam
 - [ ] Rotina de recuperação de órfãos da F2 (F2.8) existe: marca correção `rodando` como `falhou` ("órfã pós-reinício") e aborta os recursos Docker do job — a F4 a chama, não a reimplementa
+      · `criarRecuperacao({ prisma, teardown, logger }).recuperarCorrecoesOrfas()`, em `apps/api/src/jobs/recuperacao.ts`. Devolve `{ correcaoId, submissaoId, retryN, teardown }` por correção marcada — o `retryN` vem junto para a F4 decidir entre `na_fila` e `erro` sem reconsultar. A constante do motivo é `MOTIVO_ORFA` e o tipo do evento de auditoria é `EVENTO_ORFA` (`correcao.orfa_recuperada`): usar as constantes, não repetir a string
+- [ ] Janitor da F2 (F2.7) existe como função e como CLI: `criarJanitor({ prisma, docker, logger, jobsDir }).executarCiclo()` em `apps/api/src/janitor/janitor.ts`, com entrada provisória `pnpm janitor` — é essa função que o cron da F4.1 registra, e é a entrada CLI que ele aposenta (D3 da F2)
 - [ ] `LlmExecutor` (interface) e `ClaudeCliExecutor` (implementação CLI headless) existem — entrega da F3 (CLAUDE.md, fronteiras de inversão)
 - [ ] F3 persiste `correcoes` com `veredito`, `dossie`, `duracao_s`, `transcript_path` e o rascunho da devolutiva — a F4 lê esses campos, não os escreve
 - [ ] `config` semeado pela F1 (F1.7) tem `timeout_job_padrao_s` = 1500 e `pausa_global` como **objeto** `{ ativa, motivo, desde, tentativas }` — `SELECT chave, valor FROM config WHERE chave IN ('timeout_job_padrao_s','pausa_global')`
@@ -109,11 +112,14 @@ de deixar submissão em `corrigindo`, e o run acaba: lote inteiro terminal vira 
 - [ ] Iniciar em `onModuleInit` e encerrar em `onModuleDestroy` com `boss.stop({ wait: true })` — job em andamento termina (§12)
 - [ ] Declarar as filas em um único módulo de constantes: `correcao`, `retomada-pausa`, `janitor`
 - [ ] Configurar todo job com timeout explícito e `retryLimit: 0` (D1)
-- [ ] Registrar o schedule do `janitor` no cron do pg-boss (§12), chamando a mesma função da F2 (F2.7, D3) e aposentando a entrada CLI provisória; todo log de fila e worker sai pelo logger da F4.0, com `submissao_id` e `correcao_id`
+- [ ] Registrar o ciclo do `janitor` chamando a mesma função da F2 (F2.7, D3) — **amarrado ao botão de correções, não ao processo da API** (§12, plano v1.9 Apêndice B item 3): um ciclo ao ligar as correções, ciclos periódicos enquanto ligadas, um ciclo ao desligar, e **nada** enquanto o sistema está ocioso. O requisito é do §12: a máquina é de trabalho e roda os containers de outros projetos do operador, então o sistema não varre Docker em segundo plano. Mantida a execução sob demanda (`pnpm janitor` e/ou botão)
+- [ ] Não confundir com a pausa global: pausa por disco **não** desliga o janitor — quem escreve essa pausa é ele (§10.19, D9), e desligá-lo faria o sistema parar de limpar exatamente quando precisa. O que o liga e desliga é o run/botão de correções
+- [ ] O intervalo dos ciclos periódicos entra em `config` como chave nova (`janitor_intervalo_min`), com o mesmo critério do resto: número calibrável no banco, nunca literal no código. Valor inicial sugerido: 15 min — é vigilância de disco durante o run (§10.19), não limpeza urgente
+- [ ] Todo log de fila e worker sai pelo logger da F4.0, com `submissao_id` e `correcao_id`
 
 **Testes:** integração contra o Postgres do compose — job enviado e consumido; `boss.stop({ wait: true })` espera o handler terminar em vez de cortá-lo.
 
-**Pronto quando:** a listagem de schedules do boss inclui `janitor`, e derrubar a API com um job em execução deixa o job concluído (não `expired`).
+**Pronto quando:** com a API de pé e as correções **desligadas**, `docker events` não registra nenhuma remoção do sistema por dez minutos — é a prova do requisito do §12, e é ela que o operador vai querer ver antes de confiar a máquina de trabalho dele ao sistema. Ligando as correções, o ciclo do janitor aparece no log; desligando, aparece o ciclo final e mais nada. E derrubar a API com um job em execução deixa o job concluído (não `expired`).
 
 ### F4.3 — Máquina de estados persistida
 
@@ -182,6 +188,7 @@ de deixar submissão em `corrigindo`, e o run acaba: lote inteiro terminal vira 
 **Tarefas**
 
 - [ ] Ler e escrever `config.pausa_global` no **formato objeto semeado pela F1** — `{ ativa, motivo, desde, tentativas }`, com `motivo ∈ {manual, limite_plano, credencial, disco}` — nunca como booleano; o motivo `disco` é escrito pelo janitor da F2 (F2.7, D9) e quem obedece é este handler
+      · o janitor **já grava a notificação** junto com a pausa por disco, e **não sobrescreve** pausa já ativa de outro motivo. Este handler não deve duplicar nem a notificação nem a regra de precedência para o caminho `disco`
 - [ ] `PausaService.pausar(motivo)` / `retomar(origem)` — manual e automática pelo mesmo caminho, ambas gravando evento e notificação (§12)
 - [ ] Handler checa a pausa antes de qualquer efeito: se ativa, cria correção `nao_executada`, devolve a submissão a `na_fila` sem consumir retry e completa o job (§6, §10.10); a fila também é pausada no pg-boss para não girar em falso, mas a autoridade é a checagem do handler (D4)
 - [ ] `classificaFalhaCli(exitCode, stderr, transcriptTail)` puro, devolvendo `limite_plano | credencial | outra`, com fixtures de saída real em `apps/api/test/fixtures/cli/`; `outra` é o padrão conservador (consome retry normalmente)

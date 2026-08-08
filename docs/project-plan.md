@@ -2,7 +2,7 @@
 
 Sistema de correção assistida por IA para desafios de alunos da Full Cycle.
 
-- Versão: 1.7 — Agosto/2026
+- Versão: 1.9 — Agosto/2026
 - Nome-código: "Banca" (a banca que corrige). Provisório; trocar depois é um find-replace.
 - Status: documento vivo. Mudança de arquitetura passa por aqui antes de virar código.
 - Envelhecimento: quando uma fase é marcada como implementada, o **código** passa a ser a
@@ -300,7 +300,7 @@ docker run -d --name fc-job-<id> \
 - **Skill**: montada RO em `/workspace/skill`; o prompt manda ler `/workspace/skill/SKILL.md` primeiro e seguir literalmente (inclusive `devolutivas.md` e demais arquivos citados por ela). Não dependemos da descoberta automática de skills em modo headless — funciona com o tool Read, que sempre existe.
 - **`_shared` das skills**: as skills `corrige-*` referenciam `../_shared/devolutivas-guide.md` por caminho relativo, então `$SKILLS_DIR/_shared` é montado RO em `/workspace/_shared` — o caminho relativo que elas já usam resolve dentro do runner sem editar skill nenhuma. Montar o `$SKILLS_DIR` inteiro resolveria também, mas exporia as outras 48 skills ao agente sem necessidade. Se o guia não existir no caminho, o Job Controller falha alto: a alternativa é o agente corrigir sem o guia e a devolutiva sair fora do padrão sem nenhum erro — falha silenciosa que só apareceria na revisão humana.
 - **Ciclo de vida do runner**: o entrypoint **não encerra** quando a carga retorna. Ele escreve `resultado.json` no job dir (exit code e horário do fim) e permanece vivo até o Job Controller mandar encerrar. É o que torna o retry corretivo do §7 possível: `docker exec` + `claude --resume` exigem o container ainda de pé, e um entrypoint que sai com o `claude -p` mataria o mecanismo por construção. Consequência para o Job Controller: o fim do job é detectado pelo marcador, não pela saída do container; o timeout e o `docker kill` continuam do lado do host, valendo mesmo se o marcador nunca aparecer.
-- **Teardown em camadas**: (1) o agente roda `docker compose -p fc-job-<id> down -v` ao final; (2) o Job Controller sinaliza o encerramento ao runner e sempre executa `docker compose -p fc-job-<id> down -v --remove-orphans`, desconecta e remove networks, remove o runner — mesmo em timeout/kill; (3) o janitor pega o que sobrar por prefixo/label. Como o runner fica vivo de propósito, a camada 2 é obrigatória, não otimização: sem ela todo job vira órfão.
+- **Teardown em camadas**: (1) o agente roda `docker compose -p fc-job-<id> down -v` ao final; (2) o Job Controller sinaliza o encerramento ao runner e sempre executa `docker compose -p fc-job-<id> down -v --rmi local --remove-orphans`, desconecta e remove networks, remove o runner — mesmo em timeout/kill; (3) o janitor pega o que sobrar por prefixo/label. Como o runner fica vivo de propósito, a camada 2 é obrigatória, não otimização: sem ela todo job vira órfão. O `--rmi local` existe porque `down` sozinho **não** remove as imagens que a stack do aluno buildou: elas nascem como `fc-job-<id>-<serviço>` e ficariam no disco para sempre. `local` e não `all` de propósito — `all` removeria também as imagens que o compose só puxou do registry (`postgres:16`, `node:22`), que são compartilhadas com o resto da máquina.
 - **Limites**: runner com `--cpus 2 --memory 2.5g`. Stacks de aluno sem cap no MVP (risco aceito e documentado; duração anômala vira gatilho). Starts com jitter de 5–15s para não sincronizar tempestade de `npm install`.
 - **Concorrência**: dois limites existem conceitualmente (agentes Claude vs. stacks Docker), mas como runner = job, um único knob resolve: `max_paralelo` do run. Default 2, teto 4 com aviso (i5-12400F, WSL com 6 vCPU/10GB — ver §12 runbook).
 
@@ -390,7 +390,10 @@ Match automático por (aluno_email, projeto, fase) contra a submissão anterior 
 - **Gatilhos programáticos** (avaliados pelo backend ao fechar cada correção): tamanho da devolutiva contra limiares globais em `config` — aprovado > 5 frases ou > 700 caracteres, reprovado > 20 frases (§10.25); similaridade trigram (`pg_trgm`) contra devolutivas já geradas da mesma skill (limiar inicial 0.6, calibrar na F7); incoerência modo_avaliacao skill × dossiê; execução ausente em skill de execução; `historico_nao_avaliado` (sempre que o fallback shallow ocorreu — mais simples que mapear quais skills avaliam histórico); duração anômala. Somam-se aos autorrelatados (campo `duvidas`). Qualquer gatilho força revisão humana (§2.7). Agregação "3+ mesmo gatilho no run" = query + banner + notificação.
 - **Duração anômala, com e sem histórico**: o critério estatístico (> p95 da skill) só entra em vigor com **n ≥ 10 correções concluídas daquela skill**. Abaixo disso não há p95 confiável e vale o fallback absoluto: duração acima de **80% do timeout efetivo** da skill (`skills_map.timeout_s` ou o default de 1500s) dispara. Sem essa regra o gatilho seria ruído puro no primeiro dia de operação, que é justamente quando ele importa mais.
 - **Métricas no dashboard (MVP)**: contadores por estado, tempo médio de correção (24h), taxa de aprovação por skill, gatilhos por tipo. Análises avançadas (tendências, exportação) ficam para F8 — a matéria-prima já está no banco desde o dia 1.
-- **Janitor**: remove containers/networks órfãos por prefixo `fc-job-`; remove job dirs órfãos (sem linha em `correcoes` que os referencie) no próximo ciclo e job dirs referenciados aos 14 dias (§11); poda imagens dangling e cache de build antigos; monitora disco (§10.19).
+- **Janitor**: remove containers/networks/volumes/imagens órfãos por label `fc.job=<id>`, por `com.docker.compose.project=fc-job-<id>` e por prefixo `fc-job-` — nunca o que pertence a uma correção `rodando`, e **nunca nada fora desses três critérios**; remove job dirs órfãos (sem linha em `correcoes` que os referencie) no próximo ciclo e job dirs referenciados aos 14 dias (§11); monitora disco (§10.19). Fail-safe: se a consulta a `correcoes` falhar, o ciclo inteiro é abortado sem remover nada — sem saber o que está em execução, não há como distinguir resto de job vivo.
+- **O janitor é escopado por construção, e isso é requisito, não detalhe.** A máquina é de trabalho e roda os containers de outros projetos do operador. Toda remoção parte da pergunta "de qual job é este recurso?", e "não sei" significa **não tocar**. Nenhuma varredura do sistema enxerga a máquina inteira: poda de imagem dangling global e de cache de build **não são do janitor** — são comandos do runbook, sob decisão humana (§2.5, regra dura 1; Apêndice B v1.8 e v1.9).
+- **Ciclo de vida do janitor: ele acompanha o botão de correções, não o processo da API.** Um ciclo ao **ligar** as correções, ciclos periódicos **enquanto** estiverem ligadas (é quando o disco enche, §10.19), um ciclo ao **desligar** — e nada enquanto o sistema está ocioso. Mais a execução sob demanda (botão/CLI). Amarrar ao processo faria o sistema varrer Docker em segundo plano enquanto o operador trabalha em outra coisa, que é justamente o comportamento que o requisito acima proíbe. Isto **não** é a pausa global: pausa por disco não pode desligar o janitor, senão o sistema para de limpar exatamente quando precisa limpar.
+- **Limpeza no boot é outra rotina, e é dirigida**: a recuperação de órfãos (§10.12) lê `correcoes` em `rodando` e derruba **por nome** os recursos de cada uma. Não varre nada, e por isso pode rodar no start sem risco.
 - **Pausa global**: manual (botão) e automática (limite do plano, credencial, disco crítico). Jobs em andamento terminam; novos não iniciam.
 - **Backup**: cron pg-boss diário 03:00 → `pg_dump` para `./backups` (retém 14). Observação: cron do pg-boss roda dentro da API — com a API parada não há janitor nem backup; aceitável no MVP local (runbook cobre).
 - **Runbook** (`docs/runbook.md`, escrito na F7): `.wslconfig` recomendado (`processors=6`, `memory=10GB`, `swap=8GB` — hoje está em 2 núcleos, que é o gargalo real), desativar suspensão durante runs, como rodar `claude setup-token`, como recuperar de disco cheio, como restaurar backup.
@@ -425,7 +428,7 @@ O seed **recusa a linha inteira** quando falta `projeto`, `fase`, `skill_slug` o
 
 **Plano executável:** [`docs/fases/F1-banco-e-dominio-concluida.md`](fases/F1-banco-e-dominio-concluida.md)
 
-### F2 — Runner e execução de jobs (3–4d) ⏳ em andamento (iniciada 2026-08-07)
+### F2 — Runner e execução de jobs (3–4d) ✅ implementada em 2026-08-07
 
 O ambiente onde uma correção acontece: imagem do runner (§8), Job Controller com job dir e coleta de artefatos, gerador de override noports, network por job, teardown em camadas, janitor, recuperação de órfãos no boot e jitter. Validada com job fake, sem LLM — o agente entra só na F3.
 
@@ -435,7 +438,7 @@ O aceite guarda uma sutileza que já custou uma contradição (Apêndice B, v1.3
 
 **Ação humana que destrava:** §17.4 (`.wslconfig` e suspensão)
 
-**Plano executável:** [`docs/fases/F2-runner-e-jobs.md`](fases/F2-runner-e-jobs.md)
+**Plano executável:** [`docs/fases/F2-runner-e-jobs-concluida.md`](fases/F2-runner-e-jobs-concluida.md)
 
 ### F3 — Correção com Claude (3–5d) ⬜ não iniciada
 
@@ -672,6 +675,51 @@ inteiro está em [`INTEGRATION.md`](INTEGRATION.md). Um achado mexeu no plano:
    ref, valendo contra a delegação à skill **neste ponto**: ela é fonte de critério, não de
    infraestrutura. As skills não são editadas — mesma escolha do `modo_avaliacao` (§17.6), em que o
    sistema se protege da skill em vez de reescrever 49 arquivos de conteúdo (decisão D8 da F3).
+
+Revisão adicional em 07/08/2026 (v1.9), a partir de uma pergunta do Pierry ao ler o resumo da F2:
+*"mesmo quando eu não estiver corrigindo nada ele vai ficar rodando?"*. A pergunta expôs um
+requisito que o plano nunca escreveu e uma lacuna que ninguém tinha notado:
+
+1. **A máquina é de trabalho, e o plano nunca disse isso** (§12). O operador roda os containers de
+   outros projetos dele na mesma máquina. O janitor já era escopado por label/prefixo para container,
+   network e volume — mas a poda de **imagem dangling** que o §12 pedia enxergava a máquina inteira, e
+   um build intermediário sem tag de outro projeto entraria na lista. A regra passa a ser explícita e
+   vale para toda varredura: "não sei de quem é" significa **não tocar**. Poda de dangling global e de
+   cache de build saem do janitor e viram comandos do runbook, sob decisão humana — a mesma saída que
+   a v1.8 já tinha dado ao cache, agora estendida à imagem por coerência.
+2. **`compose down` não remove as imagens que a stack do aluno buildou** (§8). Elas nascem como
+   `fc-job-<id>-<serviço>` e sobreviviam ao teardown, acumulando a cada correção de um desafio que
+   builda — que é a maioria. É essa a pressão de disco que o §12 temia, e não a imagem dangling da
+   máquina. A camada 2 passa a rodar `down -v --rmi local --remove-orphans`: `local` remove o que o
+   projeto buildou sem tag própria, e não toca no que ele apenas puxou do registry. O janitor mantém
+   uma varredura de imagem por prefixo `fc-job-` como rede. Não foi pego na F2 porque a fixture do job
+   fake usa `image: busybox`, sem `build:` — compose de aluno real quase sempre builda.
+3. **O janitor não tinha frequência definida** (§12). O texto o dava ao cron do pg-boss e nunca dizia
+   de quanto em quanto tempo, e a F4.2 mandava "registrar o schedule (§12)" apontando para um §12 sem
+   schedule. Passa a acompanhar o **botão de correções**: ciclo ao ligar, ciclos periódicos enquanto
+   ligado, ciclo ao desligar, nada no ocioso, mais execução sob demanda. Amarrar ao processo da API
+   faria o sistema varrer Docker em segundo plano enquanto o operador trabalha em outra coisa. Não
+   confundir com a pausa global: pausa por disco **não** pode desligar o janitor, senão o sistema para
+   de limpar exatamente quando precisa — quem escreve essa pausa é o próprio janitor (§10.19, D9).
+
+Revisão adicional em 07/08/2026 (v1.8), com a **F2 implementada**. Uma contradição real do plano
+consigo mesmo, que só apareceu quando o janitor virou código:
+
+1. **O §12 mandava o janitor podar cache de build, e a regra dura 1 o proíbe** (§12, Apêndice A).
+   O texto pedia "poda imagens dangling e cache de build antigos"; a única forma prática de podar
+   cache de build é `docker builder prune`, e o Apêndice A e o guard `bloqueia-prune-docker.sh`
+   barram qualquer `docker <sub> prune`, **inclusive filtrado**. Não era ambiguidade de redação: eram
+   duas instruções incompatíveis, e quem implementasse teria que escolher uma em silêncio. Resolvido
+   a favor da regra dura: imagem dangling sai por **enumeração** (`docker images -q -f dangling=true`
+   + `docker rmi`, que o daemon recusa quando a imagem está em uso), e a poda de cache de build sai
+   do janitor e vira item do runbook (F7), sob decisão humana. O motivo de a regra vencer é o §11: o
+   socket do host está montado no runner, então prune disparado por rotina automática alcança o
+   Docker inteiro da máquina, incluindo o que não é nosso (decisão D8 da F2).
+2. **Registrado junto, sem mudar o plano:** o timeout do §10.9 é contado a partir do **start do
+   runner**, não da criação da correção. O jitter de 5–15s do §8 é espera de fila, e descontá-lo do
+   orçamento faria um `timeout_s` curto ser consumido antes de o container existir. `correcoes.duracao_s`
+   continua medida do `started_at` da correção — as duas respondem a perguntas diferentes, e o
+   `erro_resumo` do timeout diz as duas para não parecer que a espera passou do limite sem ninguém agir.
 
 Revisão adicional em 07/08/2026 (v1.4), motivada por uma constatação do usuário no primeiro dia de
 desenvolvimento: o §13 descrevia a *intenção* de cada fase, não um plano executável — faltavam tarefas,

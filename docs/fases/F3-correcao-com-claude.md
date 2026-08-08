@@ -147,15 +147,19 @@ devolutiva-rascunho no formato da skill, persistidos e auditáveis.
 
 **Entrega:** o Job Controller fecha a correção validando o dossiê, com um retry corretivo na mesma sessão antes do teardown, e persiste o resultado.
 
-**Arquivos:** fechamento do Job Controller (onde a F2 o colocou)
+**Arquivos:** `apps/api/src/jobs/job-controller.ts` (o ponto de extensão `aoColetar`, entregue pela F2.5)
 
 **Tarefas**
 
 - [ ] Ler `<job_dir>/dossie.json` e validar com o validador da F3.1; ausência do arquivo é o mesmo caso de JSON inválido (§10.7)
+      · a F2.5 já **coletou** o arquivo e classificou em `ausente`/`inválido`/`válido` (D5 da F2): o que falta aqui é validar o conteúdo contra o schema, não reler o disco
 - [ ] Em caso de inválido, reinvocar **no runner ainda vivo** pelo `retomar` do `LlmExecutor` (F3.4) — `docker exec` + `claude --resume <session_id>` — com a mensagem de erro do validador, exatamente 1 vez (§7, Apêndice B (06/08) item 6)
-- [ ] Garantir por código que o teardown só ocorre depois da segunda validação — inverter essa ordem torna o retry impossível
+- [ ] Plugar tudo isso no `aoColetar` das deps do Job Controller (tipo `PontoDeValidacao`, F2.5): ele roda **entre** a coleta e o teardown, com o runner ainda de pé, e devolver artefatos recoletados é como o dossiê reescrito pelo `--resume` chega ao desfecho. Não criar um caminho novo de fechamento — a ordem já está garantida pelo `finally` de `executarJob`
+- [x] Garantir por código que o teardown só ocorre depois da segunda validação — inverter essa ordem torna o retry impossível
+      · **entregue pela F2.5**: o teardown mora no `finally` de `executarJob`, depois do `aoColetar`, e um teste do `job-controller.test.ts` trava que nenhuma remoção acontece antes do ponto de extensão
 - [ ] Não incrementar `retry_n` no retry corretivo; se a segunda validação falhar, marcar a correção como `falhou` com `erro_resumo` do validador (o consumo de retry do job é F4)
 - [ ] Aplicar D4: persistir `correcoes` (veredito, dossiê em jsonb, modelo, duração, `started_at`/`finished_at`, `transcript_path`, `exit_code`) e `devolutivas.texto_agente` a partir de `devolutiva_rascunho`, com `texto_final` começando igual — `texto_agente` é imutável (regra dura 7)
+      · a F2.5 já persiste `status`, `exit_code`, `duracao_s`, `finished_at` e `erro_resumo`; `transcript_path` é gravado na criação da correção (F2.4). O que a F3 acrescenta é `veredito` e `dossie` — e a linha de `devolutivas`, que a F2 não toca
 - [ ] Preservar o job dir da correção persistida, inclusive quando `falhou` (§11) — apagá-lo é o bug
 - [ ] Logar o ciclo com `job_id`/`submissao_id` (§12)
 

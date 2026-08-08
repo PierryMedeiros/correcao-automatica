@@ -2,9 +2,19 @@ import { existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import type { PrismaClient } from '../db/client.js';
 import type { Logger } from '../log.js';
+import {
+  aguardarMarcador as aguardarMarcadorDeVerdade,
+  coletarArtefatos,
+  desfechoDoMarcador,
+  resumoDeTimeout,
+  type ArtefatosDoJob,
+  type EsperaDoMarcador,
+  type MarcadorDeFim,
+} from './coleta.js';
 import type { DockerCli } from './docker.js';
 import { ARQUIVO_TRANSCRIPT, criarJobDir, type ComposeConhecido, type JobJson } from './job-dir.js';
 import { caminhoDoJobDir, labelDoJob, networkDoJob, nomeDoRunner } from './nomes.js';
+import { criarTeardown, type ResultadoDoTeardown, type Teardown } from './teardown.js';
 import { timeoutEfetivoS } from './timeout.js';
 
 // Job Controller: prepara os arquivos do job e sobe o runner (plan §8, §9.2 passo 3).
@@ -55,6 +65,22 @@ export interface AmbienteDoJob {
   runnerImage: string;
 }
 
+/**
+ * Onde a F3 pluga a validação do dossiê e o retry corretivo do §7.
+ *
+ * Roda **entre** a coleta e o teardown, com o runner ainda vivo — é a única janela em que o
+ * `docker exec` + `claude --resume` são possíveis (§8 ciclo de vida, §9.2 passo 6). Devolver
+ * artefatos recoletados é o caminho para o `--resume` que reescreveu o `dossie.json` ser visto
+ * pelo desfecho; devolver `undefined` mantém o que a coleta achou.
+ */
+export type PontoDeValidacao = (contexto: {
+  job: JobEmVoo;
+  artefatos: ArtefatosDoJob;
+  status: StatusDeCorrecaoFechada;
+}) => Promise<ArtefatosDoJob | undefined>;
+
+export type StatusDeCorrecaoFechada = 'concluida' | 'falhou' | 'timeout';
+
 export interface DepsDoJobController {
   prisma: PrismaClient;
   docker: DockerCli;
@@ -64,6 +90,12 @@ export interface DepsDoJobController {
   esperar?: (ms: number) => Promise<void>;
   aleatorio?: () => number;
   tokenPresente?: () => boolean;
+  agora?: () => Date;
+  /** Default: o teardown do §8 camada 2 sobre o mesmo Docker e o mesmo `$JOBS_DIR`. */
+  teardown?: Teardown;
+  /** Injetável para o teste do §10.9 não custar o timeout de verdade. */
+  aguardarMarcador?: (opcoes: EsperaDoMarcador) => Promise<MarcadorDeFim | null>;
+  aoColetar?: PontoDeValidacao;
 }
 
 export interface PedidoDeJob {
@@ -100,6 +132,18 @@ export interface JobPreparado extends JobEmVoo {
   pedido: PedidoDeJob;
 }
 
+/** O que a correção deixou para trás quando fechou (§5, §9.2 passo 6). */
+export interface DesfechoDoJob {
+  correcaoId: string;
+  submissaoId: string;
+  status: StatusDeCorrecaoFechada;
+  exitCode: number | null;
+  duracaoS: number;
+  finishedAt: Date;
+  erroResumo: string | null;
+  artefatos: ArtefatosDoJob;
+}
+
 export interface JobController {
   /** Passo 3 do §9.2: prepara os arquivos. Nada de Docker acontece aqui. */
   prepararJob(pedido: PedidoDeJob): Promise<JobPreparado>;
@@ -107,6 +151,14 @@ export interface JobController {
   subirRunner(preparado: JobPreparado): Promise<JobEmVoo>;
   /** Os dois acima, para quem não precisa escrever nada no job dir entre eles. */
   iniciarJob(pedido: PedidoDeJob): Promise<JobEmVoo>;
+  /** Espera o marcador (ou o timeout do §10.9), colhe os artefatos e fecha a correção. */
+  acompanharJob(job: JobEmVoo): Promise<DesfechoDoJob>;
+  /** Subir + acompanhar, com o teardown do §8 garantido em `finally`. */
+  executarJob(preparado: JobPreparado): Promise<DesfechoDoJob>;
+  /** Camada 2 do teardown, sem kill: o job terminou por conta própria. */
+  encerrarJob(correcaoId: string): Promise<ResultadoDoTeardown>;
+  /** Kill + teardown. Primitiva do cancelamento e da substituição da F4 (§6, §10.5). */
+  abortarJob(correcaoId: string): Promise<ResultadoDoTeardown>;
 }
 
 const esperarDeVerdade = (ms: number): Promise<void> =>
@@ -117,6 +169,9 @@ export function criarJobController(deps: DepsDoJobController): JobController {
   const esperar = deps.esperar ?? esperarDeVerdade;
   const aleatorio = deps.aleatorio ?? Math.random;
   const tokenPresente = deps.tokenPresente ?? (() => true);
+  const agora = deps.agora ?? (() => new Date());
+  const aguardarMarcador = deps.aguardarMarcador ?? aguardarMarcadorDeVerdade;
+  const teardown = deps.teardown ?? criarTeardown({ docker, logger, jobsDir: ambiente.jobsDir });
 
   /**
    * Confere o que vai ser montado ANTES de criar recurso nenhum.
@@ -296,7 +351,133 @@ export function criarJobController(deps: DepsDoJobController): JobController {
     async iniciarJob(pedido) {
       return controlador.subirRunner(await controlador.prepararJob(pedido));
     },
+
+    async acompanharJob(job) {
+      const log = logger.child({ job_id: job.correcaoId, submissao_id: job.submissaoId });
+      const limiteS = job.jobJson.timeout_s;
+
+      // O relógio do timeout começa quando o runner começa, e não quando a correção foi criada: o
+      // jitter de 5–15s do §8 é espera de fila, não trabalho do job. `duracao_s`, essa sim, é
+      // medida do `started_at` da correção — ela responde "quanto essa correção custou", que é
+      // outra pergunta.
+      const correcao = await prisma.correcao.findUniqueOrThrow({
+        where: { id: BigInt(job.correcaoId) },
+        select: { startedAt: true },
+      });
+
+      log.info({ timeout_s: limiteS }, 'aguardando o marcador de fim do job');
+      const marcador = await aguardarMarcador({
+        jobDir: job.jobDir,
+        limiteMs: limiteS * 1_000,
+        agora: () => agora().getTime(),
+      });
+
+      const finishedAt = agora();
+      const duracaoS = Math.max(
+        0,
+        Math.round((finishedAt.getTime() - correcao.startedAt.getTime()) / 1_000),
+      );
+
+      let status: StatusDeCorrecaoFechada;
+      let erroResumo: string | null;
+
+      if (marcador === null) {
+        // §10.9: o limite é do lado do host justamente para valer quando o runner não responde
+        // mais. O `kill` é o que impede um job travado de segurar CPU e memória para sempre.
+        status = 'timeout';
+        erroResumo = resumoDeTimeout(duracaoS, limiteS);
+        log.warn({ duracao_s: duracaoS, timeout_s: limiteS }, 'timeout do job: matando o runner');
+        await docker(['kill', nomeDoRunner(job.correcaoId)], { toleraFalha: true }).catch(() => {
+          // Runner já morto é o caso comum aqui: quem estourou o tempo pode ter estourado a memória.
+        });
+      } else {
+        ({ status, erroResumo } = desfechoDoMarcador(marcador));
+      }
+
+      let artefatos = coletarArtefatos(job.jobDir);
+
+      // PONTO DE EXTENSÃO DA F3 (§7, §9.2 passo 6): validação do dossiê e retry corretivo via
+      // `docker exec` + `claude --resume` entram aqui, com o runner ainda de pé. Inverter esta
+      // ordem — teardown antes — torna o retry impossível, e o sintoma é silencioso.
+      if (deps.aoColetar) {
+        artefatos = (await deps.aoColetar({ job, artefatos, status })) ?? artefatos;
+      }
+
+      await prisma.correcao.update({
+        where: { id: BigInt(job.correcaoId) },
+        data: {
+          status,
+          exitCode: marcador?.exit_code ?? null,
+          duracaoS,
+          finishedAt,
+          erroResumo,
+          // `dossie` fica nulo: quem valida contra o schema do §7 e persiste é a F3 (D5).
+        },
+      });
+
+      log.info(
+        { status, exit_code: marcador?.exit_code ?? null, duracao_s: duracaoS },
+        'correção fechada',
+      );
+
+      return {
+        correcaoId: job.correcaoId,
+        submissaoId: job.submissaoId,
+        status,
+        exitCode: marcador?.exit_code ?? null,
+        duracaoS,
+        finishedAt,
+        erroResumo,
+        artefatos,
+      };
+    },
+
+    async executarJob(preparado) {
+      try {
+        const job = await controlador.subirRunner(preparado);
+        return await controlador.acompanharJob(job);
+      } catch (erro) {
+        // Exceção aqui deixaria a correção presa em `rodando` — e correção `rodando` sem processo
+        // dono é exatamente o que a recuperação de boot (F2.8) trata como órfã. Fechar na hora,
+        // com o motivo, evita que uma falha de infraestrutura vire um fantasma no banco.
+        await marcarFalhaDeInfra(preparado.correcaoId, erro);
+        throw erro;
+      } finally {
+        // O `finally` é o contrato do §8: o runner não morre sozinho (D10), então todo caminho de
+        // saída — sucesso, falha, timeout, exceção — passa por aqui.
+        await teardown.encerrar(preparado.correcaoId);
+      }
+    },
+
+    encerrarJob(correcaoId) {
+      return teardown.encerrar(correcaoId);
+    },
+
+    abortarJob(correcaoId) {
+      return teardown.abortar(correcaoId);
+    },
   };
+
+  /** Fecha uma correção que nem chegou a ter desfecho próprio: o job morreu antes do marcador. */
+  async function marcarFalhaDeInfra(correcaoId: string, erro: unknown): Promise<void> {
+    try {
+      // `updateMany` e não `update`: se a correção já foi fechada por `acompanharJob` antes da
+      // exceção, o certo é não mexer nela — e "nenhuma linha casou" não pode virar exceção nova
+      // por cima da que estamos tratando.
+      await prisma.correcao.updateMany({
+        where: { id: BigInt(correcaoId), status: 'rodando' },
+        data: {
+          status: 'falhou',
+          finishedAt: agora(),
+          erroResumo: `falha ao executar o job: ${(erro as Error).message}`,
+        },
+      });
+    } catch (falha) {
+      logger
+        .child({ job_id: correcaoId })
+        .error({ erro: (falha as Error).message }, 'não consegui marcar a correção como falhou');
+    }
+  }
 
   return controlador;
 }

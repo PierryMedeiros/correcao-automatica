@@ -1,11 +1,10 @@
 import { execFile } from 'node:child_process';
-import { cpSync, copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { cpSync, copyFileSync, existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { parseArgs } from 'node:util';
-import { promisify } from 'node:util';
+import { parseArgs, promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
-import { readdirSync } from 'node:fs';
 import { criarPrisma } from '../../apps/api/src/db/client.js';
 import {
   databaseUrl,
@@ -15,17 +14,26 @@ import {
   tokenClaudePresente,
 } from '../../apps/api/src/env.js';
 import { criarDockerCli } from '../../apps/api/src/jobs/docker.js';
-import { ARQUIVO_DOSSIE, ARQUIVO_RESULTADO } from '../../apps/api/src/jobs/job-dir.js';
-import { criarJobController, type JobEmVoo } from '../../apps/api/src/jobs/job-controller.js';
+import { ARQUIVO_DOSSIE } from '../../apps/api/src/jobs/job-dir.js';
+import {
+  criarJobController,
+  type DesfechoDoJob,
+  type JobPreparado,
+} from '../../apps/api/src/jobs/job-controller.js';
 import { labelDoJob } from '../../apps/api/src/jobs/nomes.js';
+import { criarRecuperacao } from '../../apps/api/src/jobs/recuperacao.js';
+import { criarTeardown } from '../../apps/api/src/jobs/teardown.js';
 import { criarLogger } from '../../apps/api/src/log.js';
 import { NOME_DO_BARE, criarRepoBare } from './repo-fixture.js';
 
 // Harness de job fake (F2.0): roda N jobs fim a fim contra Docker de verdade, sem gastar agente.
 //
-// É ele que executa os aceites A1–A6 da F2 e vira a base do E2E da F7. Nasce como esqueleto e
-// ganha capacidade a cada etapa do pipeline: hoje vai até a subida do runner (F2.4) e da carga,
-// porque acompanhamento/timeout (F2.5) e teardown (F2.6) ainda não existem.
+// É ele que executa os aceites A1–A6 da F2 e vira a base do E2E da F7. Cobre o pipeline inteiro —
+// prepara o job dir, sobe o runner, acompanha até o marcador (ou o timeout), colhe os artefatos,
+// persiste a correção e derruba tudo o que criou.
+//
+// Até a F5 este processo é o "processo que acompanha os jobs" do §10.12: por isso ele começa
+// rodando a recuperação de órfãos, exatamente como a API vai fazer no boot (F4).
 
 const executar = promisify(execFile);
 const AQUI = fileURLToPath(new URL('.', import.meta.url));
@@ -38,6 +46,7 @@ interface Opcoes {
   dormir: number;
   timeout: number | null;
   matarNoMeio: boolean;
+  recuperar: boolean;
 }
 
 function ajuda(): string {
@@ -46,17 +55,19 @@ pnpm job-fake — roda jobs fake fim a fim contra o Docker local (F2.0)
 
   --n <N>            quantos jobs em paralelo (default 1). O aceite A2 pede 4
   --dormir <s>       faz a carga dormir <s> antes de trabalhar, para provocar o timeout (A3)
-  --timeout <s>      timeout do job em segundos       [PENDENTE: quem conta é a F2.5]
-  --matar-no-meio    SIGKILL no próprio processo com jobs em voo (A4)
-                                                      [a recuperação no boot é a F2.8]
+  --timeout <s>      timeout do job em segundos. Vira \`skills_map.timeout_s\` do desafio fake
+                     ("${PROJETO_FAKE}" / "${FASE_FAKE}"), que é o caminho real do §10.9 — sem a
+                     flag, o override é limpo e vale o \`config.timeout_job_padrao_s\`
+  --matar-no-meio    SIGKILL no próprio processo com jobs em voo (A4). A recuperação acontece na
+                     execução seguinte, que é o boot do processo dono dos jobs (§10.12)
+  --recuperar        só roda a recuperação de órfãos e sai — o segundo passo do A4
   --help             esta ajuda
 
-O que já funciona nesta metade da F2: semeia submissão + correção \`rodando\`, materializa o job
-dir com job.json e o override noports, cria a network do job, sobe o runner na ordem
-network → create → connect → start e espera a carga escrever o marcador.
+Todo início de execução roda a recuperação de órfãos (F2.8) antes de qualquer job novo: até a F5,
+este processo é o que o §10.12 chama de "processo que acompanha os jobs".
 
-O que ainda não: coleta e persistência do desfecho (F2.5), teardown em camadas (F2.6) e janitor
-(F2.7). Por isso o relatório termina imprimindo o que ficou de pé e o comando exato para remover.
+O job dir de cada correção fica no disco de propósito (§11): é a auditoria dela. Quem aplica a
+retenção é o \`pnpm janitor\`.
 `.trimStart();
 }
 
@@ -68,6 +79,7 @@ function lerOpcoes(argv: string[]): Opcoes | null {
       dormir: { type: 'string' },
       timeout: { type: 'string' },
       'matar-no-meio': { type: 'boolean' },
+      recuperar: { type: 'boolean' },
       help: { type: 'boolean' },
     },
   });
@@ -79,6 +91,7 @@ function lerOpcoes(argv: string[]): Opcoes | null {
     dormir: Number(values.dormir ?? 0),
     timeout: values.timeout === undefined ? null : Number(values.timeout),
     matarNoMeio: values['matar-no-meio'] === true,
+    recuperar: values.recuperar === true,
   };
 }
 
@@ -96,30 +109,6 @@ function primeiraSkillReal(): string {
     );
   }
   return skill;
-}
-
-async function esperarMarcador(
-  jobDir: string,
-  limiteMs: number,
-): Promise<Record<string, unknown> | null> {
-  // PROVISÓRIO: quem detecta o fim pelo marcador, com timeout do §10.9 e coleta de artefatos, é a
-  // F2.5. Esta espera existe só para o harness ter o que relatar enquanto ela não chega, e a
-  // tarefa de trocá-la pela coleta de verdade está registrada na F2.5 do arquivo da fase.
-  const alvo = join(jobDir, ARQUIVO_RESULTADO);
-  const fim = Date.now() + limiteMs;
-
-  while (Date.now() < fim) {
-    if (existsSync(alvo)) {
-      try {
-        return JSON.parse(readFileSync(alvo, 'utf8')) as Record<string, unknown>;
-      } catch {
-        // Escrita parcial: só vale JSON completo.
-      }
-    }
-    await new Promise((resolver) => setTimeout(resolver, 250));
-  }
-
-  return null;
 }
 
 async function contarRecursos(
@@ -148,113 +137,200 @@ async function principal(): Promise<void> {
 
   const prisma = criarPrisma(databaseUrl());
   const logger = criarLogger();
+  const docker = criarDockerCli(logger);
+  const teardown = criarTeardown({ docker, logger, jobsDir: jobsDir() });
   const controller = criarJobController({
     prisma,
-    docker: criarDockerCli(logger),
+    docker,
     logger,
+    teardown,
     ambiente: { skillsDir: skillsDir(), jobsDir: jobsDir(), runnerImage: runnerImage() },
   });
 
-  const skillSlug = primeiraSkillReal();
-  const compose = readFileSync(join(AQUI, 'fixtures', 'compose-portas-fixas.yaml'), 'utf8');
-
-  // O bare repo nasce uma vez e é copiado para cada job dir: o SHA precisa ser conhecido ANTES do
-  // `job.json`, que é escrito na preparação do job.
-  const fixtures = mkdtempSync(join(tmpdir(), 'banca-job-fake-'));
-  const { commitSha } = criarRepoBare(fixtures);
-
-  console.log(`job-fake: ${opcoes.n} job(s), skill ${skillSlug}, commit ${commitSha.slice(0, 8)}`);
-  if (opcoes.timeout !== null) {
-    console.log('job-fake: --timeout ainda não é aplicado — quem conta o tempo é a F2.5.');
-  }
-
-  const emVoo: JobEmVoo[] = [];
-
   try {
-    const jobs = await Promise.all(
-      Array.from({ length: opcoes.n }, async (_, indice) => {
-        const submissao = await prisma.submissao.create({
-          data: {
-            origem: 'manual',
-            alunoNome: `Aluno Fake ${indice + 1}`,
-            alunoEmail: `aluno-fake-${indice + 1}-${Date.now()}@exemplo.invalido`,
-            projeto: PROJETO_FAKE,
-            fase: FASE_FAKE,
-            skillSlug,
-            repoUrl: 'file:///workspace/repo-exemplo.git',
-            commitSha,
-            status: 'corrigindo',
-          },
-        });
+    // Boot: o §10.12 acontece aqui, antes de qualquer job novo (F2.8).
+    const recuperadas = await criarRecuperacao({
+      prisma,
+      teardown,
+      logger,
+    }).recuperarCorrecoesOrfas();
+    if (recuperadas.length > 0) {
+      console.log(`job-fake: ${recuperadas.length} correção(ões) órfã(s) recuperada(s) no boot:`);
+      console.table(
+        recuperadas.map((r) => ({
+          correcao: r.correcaoId,
+          submissao: r.submissaoId,
+          containers: r.teardown.containersRemovidos.length,
+          networks: r.teardown.networksRemovidas.length,
+        })),
+      );
+      console.log(
+        '          As submissões seguem em `corrigindo`: devolvê-las à fila consumindo retry é da F4.',
+      );
+    }
+    if (opcoes.recuperar) return;
 
-        const preparado = await controller.prepararJob({
-          submissaoId: submissao.id.toString(),
-          alunoNome: submissao.alunoNome,
-          alunoEmail: submissao.alunoEmail,
-          projeto: PROJETO_FAKE,
-          fase: FASE_FAKE,
-          skillSlug,
-          repoUrl: submissao.repoUrl,
-          commitSha,
-          modelo: 'fake',
-          retryN: 1,
-          payloadCmd: `FC_FAKE_DORMIR_S=${opcoes.dormir} bash /workspace/payload.sh`,
-          compose: { conteudo: compose },
-        });
+    const skillSlug = primeiraSkillReal();
+    const compose = readFileSync(join(AQUI, 'fixtures', 'compose-portas-fixas.yaml'), 'utf8');
+    await aplicarTimeoutDoDesafio(prisma, skillSlug, opcoes.timeout);
 
-        // Só o job dir é visível dentro do runner: a carga e o repo do "aluno" entram por aqui.
-        copyFileSync(join(AQUI, 'payload.sh'), join(preparado.jobDir, 'payload.sh'));
-        cpSync(join(fixtures, NOME_DO_BARE), join(preparado.jobDir, NOME_DO_BARE), {
-          recursive: true,
-        });
+    // O bare repo nasce uma vez e é copiado para cada job dir: o SHA precisa ser conhecido ANTES do
+    // `job.json`, que é escrito na preparação do job.
+    const fixtures = mkdtempSync(join(tmpdir(), 'banca-job-fake-'));
+    const { commitSha } = criarRepoBare(fixtures);
 
-        const job = await controller.subirRunner(preparado);
-        emVoo.push(job);
-        return job;
-      }),
+    console.log(
+      `job-fake: ${opcoes.n} job(s), skill ${skillSlug}, commit ${commitSha.slice(0, 8)}` +
+        `${opcoes.timeout === null ? '' : `, timeout ${opcoes.timeout}s`}`,
     );
 
+    let preparados: JobPreparado[];
+    try {
+      preparados = await Promise.all(
+        Array.from({ length: opcoes.n }, (_, indice) =>
+          prepararUm(prisma, controller, {
+            indice,
+            skillSlug,
+            commitSha,
+            compose,
+            fixtures,
+            opcoes,
+          }),
+        ),
+      );
+    } finally {
+      rmSync(fixtures, { recursive: true, force: true });
+    }
+
     if (opcoes.matarNoMeio) {
+      // Sobe os runners e mata este processo com eles em voo: é o §10.12 provocado de verdade.
+      // O teardown do `executarJob` não roda — que é exatamente o ponto.
+      await Promise.all(preparados.map((preparado) => controller.subirRunner(preparado)));
       console.log('job-fake: SIGKILL no próprio processo, com os jobs em voo (aceite A4).');
-      console.log('job-fake: a recuperação de órfãos no boot é a F2.8 — hoje as correções ficam');
       console.log(
-        '          em `rodando` e os runners de pé, que é exatamente o que ela conserta.',
+        'job-fake: rode `pnpm job-fake --recuperar` para o boot seguinte fazer o §10.12.',
       );
       process.kill(process.pid, 'SIGKILL');
     }
 
-    const limiteMs = (opcoes.dormir + 180) * 1000;
-    const relatorio = await Promise.all(
-      jobs.map(async (job) => {
-        const marcador = await esperarMarcador(job.jobDir, limiteMs);
-        const recursos = await contarRecursos(job.correcaoId);
-        return {
-          correcao: job.correcaoId,
-          exit_code: marcador?.['exit_code'] ?? '(sem marcador)',
-          motivo: marcador?.['motivo'] ?? '-',
-          dossie: existsSync(join(job.jobDir, ARQUIVO_DOSSIE)) ? 'sim' : 'não',
-          containers: recursos.containers,
-          networks: recursos.networks,
-        };
-      }),
+    const desfechos = await Promise.allSettled(
+      preparados.map((preparado) => controller.executarJob(preparado)),
     );
 
     console.log('\njob-fake: relatório');
-    console.table(relatorio);
+    console.table(
+      await Promise.all(
+        desfechos.map(async (resultado, indice) => {
+          const preparado = preparados[indice];
+          const correcaoId = preparado?.correcaoId ?? '?';
+          const recursos = await contarRecursos(correcaoId);
+          const desfecho: DesfechoDoJob | null =
+            resultado.status === 'fulfilled' ? resultado.value : null;
+
+          return {
+            correcao: correcaoId,
+            status: desfecho?.status ?? 'exceção',
+            exit_code: desfecho?.exitCode ?? '-',
+            duracao_s: desfecho?.duracaoS ?? '-',
+            dossie: existsSync(join(preparado?.jobDir ?? '', ARQUIVO_DOSSIE)) ? 'sim' : 'não',
+            containers: recursos.containers,
+            networks: recursos.networks,
+          };
+        }),
+      ),
+    );
+
+    for (const [indice, resultado] of desfechos.entries()) {
+      if (resultado.status === 'rejected') {
+        console.log(`job-fake: job ${indice + 1} explodiu — ${String(resultado.reason)}`);
+      } else if (resultado.value.erroResumo) {
+        console.log(`job-fake: job ${resultado.value.correcaoId} — ${resultado.value.erroResumo}`);
+      }
+    }
+
+    console.log(
+      '\njob-fake: as colunas `containers` e `networks` são o aceite A1/A6 — qualquer valor ' +
+        'diferente de 0\n          é recurso que escapou do teardown. Os job dirs ficam em ' +
+        `${jobsDir()} de propósito (§11).`,
+    );
   } finally {
-    rmSync(fixtures, { recursive: true, force: true });
     await prisma.$disconnect();
   }
+}
 
-  if (emVoo.length > 0) {
-    console.log(
-      '\njob-fake: teardown é a F2.6 e ainda não existe. Para remover o que subiu agora (por\n' +
-        '          label e por nome, nunca prune — regra dura 1):\n',
-    );
-    console.log(`  docker rm -f ${emVoo.map((j) => j.container).join(' ')}`);
-    console.log(`  docker network rm ${emVoo.map((j) => j.network).join(' ')}`);
-    console.log('\n  Os job dirs ficam no disco de propósito (§11): são a auditoria da correção.');
-  }
+/**
+ * `--timeout` entra pelo caminho de verdade do §10.9: override do desafio em `skills_map`.
+ *
+ * Passar o número direto ao controller seria mais curto e cravaria um literal de segundos fora do
+ * banco, que é justamente o que o §10.9 proíbe. Sem a flag, o override é limpo — senão um
+ * `--timeout 10` de ontem mataria em 10s o job de hoje.
+ */
+async function aplicarTimeoutDoDesafio(
+  prisma: ReturnType<typeof criarPrisma>,
+  skillSlug: string,
+  timeoutS: number | null,
+): Promise<void> {
+  await prisma.skillsMap.upsert({
+    where: { projeto_fase: { projeto: PROJETO_FAKE, fase: FASE_FAKE } },
+    update: { skillSlug, modoAvaliacao: 'execucao', timeoutS, ativo: true },
+    create: {
+      projeto: PROJETO_FAKE,
+      fase: FASE_FAKE,
+      skillSlug,
+      modoAvaliacao: 'execucao',
+      timeoutS,
+    },
+  });
+}
+
+async function prepararUm(
+  prisma: ReturnType<typeof criarPrisma>,
+  controller: ReturnType<typeof criarJobController>,
+  contexto: {
+    indice: number;
+    skillSlug: string;
+    commitSha: string;
+    compose: string;
+    fixtures: string;
+    opcoes: Opcoes;
+  },
+): Promise<JobPreparado> {
+  const { indice, skillSlug, commitSha, compose, fixtures, opcoes } = contexto;
+
+  const submissao = await prisma.submissao.create({
+    data: {
+      origem: 'manual',
+      alunoNome: `Aluno Fake ${indice + 1}`,
+      alunoEmail: `aluno-fake-${indice + 1}-${Date.now()}@exemplo.invalido`,
+      projeto: PROJETO_FAKE,
+      fase: FASE_FAKE,
+      skillSlug,
+      repoUrl: 'file:///workspace/repo-exemplo.git',
+      commitSha,
+      status: 'corrigindo',
+    },
+  });
+
+  const preparado = await controller.prepararJob({
+    submissaoId: submissao.id.toString(),
+    alunoNome: submissao.alunoNome,
+    alunoEmail: submissao.alunoEmail,
+    projeto: PROJETO_FAKE,
+    fase: FASE_FAKE,
+    skillSlug,
+    repoUrl: submissao.repoUrl,
+    commitSha,
+    modelo: 'fake',
+    retryN: 1,
+    payloadCmd: `FC_FAKE_DORMIR_S=${opcoes.dormir} bash /workspace/payload.sh`,
+    compose: { conteudo: compose },
+  });
+
+  // Só o job dir é visível dentro do runner: a carga e o repo do "aluno" entram por aqui.
+  copyFileSync(join(AQUI, 'payload.sh'), join(preparado.jobDir, 'payload.sh'));
+  cpSync(join(fixtures, NOME_DO_BARE), join(preparado.jobDir, NOME_DO_BARE), { recursive: true });
+
+  return preparado;
 }
 
 await principal();

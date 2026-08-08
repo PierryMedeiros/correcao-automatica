@@ -13,6 +13,10 @@ import { join } from 'node:path';
 export const PREFIXO_JOB = 'fc-job-';
 export const LABEL_JOB = 'fc.job';
 
+/** Quem rotula a stack do aluno é o compose, não nós (§8, spike S3, Apêndice B v1.6 item 2).
+ *  Teardown e janitor varrem os **dois** labels: varrer só `fc.job` deixa a stack inteira órfã. */
+export const LABEL_COMPOSE_PROJECT = 'com.docker.compose.project';
+
 export function nomeDoRunner(correcaoId: string): string {
   return `${PREFIXO_JOB}${correcaoId}`;
 }
@@ -28,6 +32,28 @@ export function networkDoJob(correcaoId: string): string {
 
 export function labelDoJob(correcaoId: string): string {
   return `${LABEL_JOB}=${correcaoId}`;
+}
+
+export function labelDoProjetoCompose(correcaoId: string): string {
+  return `${LABEL_COMPOSE_PROJECT}=${projetoCompose(correcaoId)}`;
+}
+
+/**
+ * O caminho inverso: dado o nome de um recurso Docker, de que job ele é — se é de algum.
+ *
+ * É o que o janitor tem quando um recurso perdeu o label (criado por versão antiga, ou por uma
+ * chamada que esqueceu de rotular): o §12 manda varrer por prefixo `fc-job-` também, e não só por
+ * label. Devolve `null` para nome que não é nosso — e é esse `null` que impede o janitor de
+ * remover container de terceiro só porque ele estava na listagem.
+ */
+export function correcaoIdDoNome(nome: string): string | null {
+  if (!nome.startsWith(PREFIXO_JOB)) return null;
+
+  const resto = nome.slice(PREFIXO_JOB.length);
+  // `fc-job-<id>`, `fc-job-<id>_net` e os containers da stack (`fc-job-<id>-app-1`).
+  const id = resto.split(/[_-]/)[0] ?? '';
+
+  return id.length > 0 ? id : null;
 }
 
 export function caminhoDoJobDir(jobsDir: string, correcaoId: string): string {

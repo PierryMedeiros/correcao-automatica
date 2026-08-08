@@ -14,6 +14,7 @@
     "db:seed": "pnpm --filter @banca/api run db:seed",
     "build:runner": "bash scripts/build-runner.sh",
     "job-fake": "pnpm --filter @banca/api exec tsx ../../scripts/job-fake/run.ts",
+    "janitor": "pnpm --filter @banca/api exec tsx ../../scripts/janitor.ts",
     "lint": "eslint . && prettier --check .",
     "format": "prettier --write .",
     "typecheck": "tsc --noEmit",

@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Writable } from 'node:stream';
@@ -11,6 +11,7 @@ import {
   SkillIndisponivelError,
   TokenAusenteError,
   criarJobController,
+  type DepsDoJobController,
   type PedidoDeJob,
 } from './job-controller.js';
 
@@ -38,7 +39,13 @@ function registrarDocker(): (args: string[]) => Promise<ResultadoDocker> {
   };
 }
 
-function controlador(opcoes: { tokenPresente?: () => boolean } = {}) {
+function controlador(
+  opcoes: {
+    tokenPresente?: () => boolean;
+    aguardarMarcador?: DepsDoJobController['aguardarMarcador'];
+    aoColetar?: DepsDoJobController['aoColetar'];
+  } = {},
+) {
   const destino = new Writable({
     write(pedaco, _codificacao, pronto) {
       linhasDeLog.push(String(pedaco));
@@ -56,6 +63,17 @@ function controlador(opcoes: { tokenPresente?: () => boolean } = {}) {
     },
     aleatorio: () => 0.5,
     tokenPresente: opcoes.tokenPresente ?? (() => true),
+    ...(opcoes.aguardarMarcador ? { aguardarMarcador: opcoes.aguardarMarcador } : {}),
+    ...(opcoes.aoColetar ? { aoColetar: opcoes.aoColetar } : {}),
+  });
+}
+
+/** O marcador que o entrypoint teria escrito, sem esperar por runner nenhum. */
+function marcadorDe(exitCode: number, motivo = 'carga_concluida') {
+  return async () => ({
+    exit_code: exitCode,
+    finished_at: '2026-08-07T12:00:00Z',
+    motivo,
   });
 }
 
@@ -285,5 +303,109 @@ describe('Job Controller — subida do runner', () => {
     );
     // `/workspace` aqui faria o daemon do host resolver o caminho no lugar errado (spike S3).
     expect(job.jobJson.compose?.comando_canonico).not.toContain('/workspace');
+  });
+});
+
+// A partir daqui é a F2.5: o outro lado do job, onde ele fecha. O que estes testes travam é que o
+// fim vem do marcador (nunca da saída do container, que não morre — §8 D10), que o timeout do
+// §10.9 é contado pelo host e mata o runner, e que o teardown roda mesmo quando dá errado.
+describe('Job Controller — acompanhamento e fechamento da correção', () => {
+  it('fecha como `concluida` quando o marcador traz exit code 0', async () => {
+    await semearTimeoutPadrao();
+    const job = await controlador().iniciarJob(pedido(await semearSubmissao()));
+
+    const desfecho = await controlador({ aguardarMarcador: marcadorDe(0) }).acompanharJob(job);
+
+    expect(desfecho.status).toBe('concluida');
+    expect(desfecho.erroResumo).toBeNull();
+
+    const correcao = await prismaTeste().correcao.findFirstOrThrow();
+    expect(correcao.status).toBe('concluida');
+    expect(correcao.exitCode).toBe(0);
+    expect(correcao.finishedAt).not.toBeNull();
+    expect(correcao.duracaoS).not.toBeNull();
+    // O dossiê só é validado e persistido na F3 (D5) — aqui ele é artefato coletado, não coluna.
+    expect(correcao.dossie).toBeNull();
+  });
+
+  it('código do runner vira `falhou` com erro_resumo legível, sem parsear log', async () => {
+    await semearTimeoutPadrao();
+    const job = await controlador().iniciarJob(pedido(await semearSubmissao()));
+
+    const desfecho = await controlador({
+      aguardarMarcador: marcadorDe(65, 'clone_falhou'),
+    }).acompanharJob(job);
+
+    expect(desfecho.status).toBe('falhou');
+    expect(desfecho.erroResumo).toContain('clone do repositório falhou');
+  });
+
+  it('sem marcador até o limite: mata o runner, marca `timeout` e preserva o job dir (§10.9)', async () => {
+    await semearTimeoutPadrao(10);
+    const job = await controlador().iniciarJob(pedido(await semearSubmissao()));
+    chamadas = [];
+
+    const desfecho = await controlador({ aguardarMarcador: async () => null }).acompanharJob(job);
+
+    expect(desfecho.status).toBe('timeout');
+    expect(desfecho.erroResumo).toContain('10s');
+    expect(chamadas).toContain(`kill fc-job-${job.correcaoId}`);
+    expect(existsSync(job.jobDir)).toBe(true);
+
+    const correcao = await prismaTeste().correcao.findFirstOrThrow();
+    expect(correcao.status).toBe('timeout');
+    expect(correcao.exitCode).toBeNull();
+  });
+
+  it('coleta o dossiê como artefato, distinguindo os três estados (D5)', async () => {
+    await semearTimeoutPadrao();
+    const job = await controlador().iniciarJob(pedido(await semearSubmissao()));
+    writeFileSync(join(job.jobDir, 'dossie.json'), '{"veredito": "aprovado"}', 'utf8');
+
+    const desfecho = await controlador({ aguardarMarcador: marcadorDe(0) }).acompanharJob(job);
+
+    expect(desfecho.artefatos.dossie.estado).toBe('valido');
+    expect(desfecho.artefatos.transcriptPath).toBe(join(job.jobDir, 'transcript.jsonl'));
+  });
+
+  it('o ponto de extensão da F3 roda depois da coleta e antes de qualquer remoção (§7)', async () => {
+    await semearTimeoutPadrao();
+    const preparado = await controlador().prepararJob(pedido(await semearSubmissao()));
+
+    let viuDossie: string | undefined;
+    let removeuAntes = true;
+
+    await controlador({
+      aguardarMarcador: marcadorDe(0),
+      aoColetar: async ({ artefatos }) => {
+        viuDossie = artefatos.dossie.estado;
+        // O runner precisa estar de pé aqui: é a única janela do `docker exec` + `--resume`.
+        removeuAntes = chamadas.some((c) => c.startsWith('rm -f') || c.startsWith('stop '));
+        return undefined;
+      },
+    }).executarJob(preparado);
+
+    expect(viuDossie).toBe('ausente');
+    expect(removeuAntes).toBe(false);
+    expect(chamadas).toContain(`network rm fc-job-${preparado.correcaoId}_net`);
+  });
+
+  it('executarJob derruba o job mesmo quando o acompanhamento explode, sem deixar `rodando`', async () => {
+    await semearTimeoutPadrao();
+    const preparado = await controlador().prepararJob(pedido(await semearSubmissao()));
+
+    await expect(
+      controlador({
+        aguardarMarcador: async () => {
+          throw new Error('daemon sumiu no meio');
+        },
+      }).executarJob(preparado),
+    ).rejects.toThrow('daemon sumiu no meio');
+
+    expect(chamadas).toContain(`network rm fc-job-${preparado.correcaoId}_net`);
+
+    const correcao = await prismaTeste().correcao.findFirstOrThrow();
+    expect(correcao.status).toBe('falhou');
+    expect(correcao.erroResumo).toContain('daemon sumiu no meio');
   });
 });
